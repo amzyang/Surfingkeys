@@ -1,3 +1,6 @@
+mapkey('R', '#4Reload the page', function() {
+    RUNTIME("reloadTab", { nocache: true });
+});
 mapkey('x', '#3Go one tab left', function() { RUNTIME("previousTab"); });
 mapkey('c', '#3Go one tab right', function() { RUNTIME("nextTab"); });
 mapkey('o', '#8Open a URL in current tab', function() {
