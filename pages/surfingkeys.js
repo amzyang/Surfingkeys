@@ -100,7 +100,6 @@ mapkey('<Ctrl-x>', '#8Decrement last number in URL', function() {
   RUNTIME.repeats = 1;
   incrementURL(-Math.max(repeats, 1));
 });
-settings.focusFirstCandidate = true;
 
 // -----------------------------------------------------------------------------------------------------------------------
 // Change hints styles
