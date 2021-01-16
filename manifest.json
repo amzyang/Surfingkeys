@@ -72,6 +72,9 @@
             "all_frames": true
         }
     ],
+    "chrome_url_overrides" : {
+        "newtab": "pages/start.html"
+    },
     "web_accessible_resources": [
         "pages/default.js",
         "pages/emoji.tsv",
