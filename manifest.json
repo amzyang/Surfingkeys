@@ -63,7 +63,8 @@
                 "content_scripts/modules.min.js",
                 "content_scripts/front.js",
                 "pages/default.js",
-                "content_scripts/content_scripts.js"
+                "content_scripts/content_scripts.js",
+                "pages/surfingkeys.js"
             ],
             "css": [
                 "content_scripts/content_scripts.css"
@@ -82,7 +83,8 @@
         "pages/frontend.html",
         "pages/pdf_viewer.html",
         "pages/shadow.css",
-        "pages/default.css"
+        "pages/default.css",
+        "pages/surfingkeys.js"
     ],
     "content_security_policy": "script-src 'self' https://www.google-analytics.com; object-src 'self'"
 }
