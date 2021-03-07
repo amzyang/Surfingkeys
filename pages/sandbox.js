@@ -1,4 +1,6 @@
-var settings = {};
+if (typeof(settings) === 'undefined') {
+    var settings = {};
+}
 function runScript(snippets) {
     var result = { settings: settings, error: "" };
     settings.map = {};
