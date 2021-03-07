@@ -120,7 +120,7 @@ Visual.style('cursor', 'background-color: #6272a4; color: #f8f8f2');
 // // Change fonts
 // // Change colors
 // -----------------------------------------------------------------------------------------------------------------------
-var settings = {}
+var settings = {};
 settings.theme = `
 .sk_theme input {
     font-family: "Fira Code";
@@ -286,4 +286,4 @@ settings.omnibarPosition = "bottom";
 // -----------------------------------------------------------------------------------------------------------------------
 // Hints overlap
 // -----------------------------------------------------------------------------------------------------------------------
-settings.hintAlign = "left"
+settings.hintAlign = "left";
