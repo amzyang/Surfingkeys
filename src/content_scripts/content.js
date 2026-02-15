@@ -280,14 +280,17 @@ function start(browser) {
                         skipObserver = false,
                         originalTitle = document.title;
 
-                    new MutationObserver(function (mutationsList) {
-                        if (skipObserver) {
-                            skipObserver = false;
-                        } else {
-                            originalTitle = document.title;
-                            showTabIndexInTitle();
-                        }
-                    }).observe(document.querySelector("title"), { childList: true });;
+                    var titleNode = document.querySelector("title");
+                    if (titleNode) {
+                        new MutationObserver(function (mutationsList) {
+                            if (skipObserver) {
+                                skipObserver = false;
+                            } else {
+                                originalTitle = document.title;
+                                showTabIndexInTitle();
+                            }
+                        }).observe(titleNode, { childList: true });
+                    }
 
                     showTabIndexInTitle();
 
