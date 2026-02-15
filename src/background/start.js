@@ -1284,6 +1284,19 @@ function start(browser) {
         }
     }
 
+    function injectSnippetsIntoTab(tabId, snippets) {
+        chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            world: "USER_SCRIPT",
+            func: (snippets, rootUrl) => {
+                import(rootUrl + 'api.js').then((module) => {
+                    module.default(rootUrl, new Function('api', 'settings', snippets));
+                });
+            },
+            args: [snippets, chrome.runtime.getURL("/")]
+        });
+    }
+
     function onFullSettingsRequested(data, callback) {
         data.isMV3 = isMV3;
         data.useNeovim = browser.nvimServer && browser.nvimServer.instance;
@@ -1309,6 +1322,12 @@ function start(browser) {
         pf(message.key, function(data) {
             if (message.key === undefined) {
                 onFullSettingsRequested(data);
+                if (isMV3 && data.showAdvanced && data.snippets && sender.url) {
+                    const extPages = ["/pages/pdf_viewer.html", "/pages/markdown.html"];
+                    if (extPages.some(p => sender.url.startsWith(chrome.runtime.getURL(p)))) {
+                        injectSnippetsIntoTab(sender.tab.id, data.snippets);
+                    }
+                }
             }
 
             _response(message, sendResponse, {
