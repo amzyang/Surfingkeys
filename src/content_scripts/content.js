@@ -80,6 +80,12 @@ function applyRuntimeConf(normal) {
                 _browser.usePdfViewer();
             } else {
                 normal.enable();
+                // prewarm the frontend iframe off the critical path, so the first
+                // UI command(omnibar/keystroke hint) does not pay its cold start
+                if (window === top && document.hasFocus()) {
+                    const prewarm = () => dispatchSKEvent("ensureFrontEnd");
+                    window.requestIdleCallback ? requestIdleCallback(prewarm, {timeout: 1500}) : setTimeout(prewarm, 500);
+                }
             }
             Mode.showStatus();
         }
