@@ -442,11 +442,7 @@ const Front = (function() {
         });
     };
     _actions['applyUserSettings'] = function (message) {
-        for (var k in message.userSettings) {
-            if (runtime.conf.hasOwnProperty(k)) {
-                runtime.conf[k] = message.userSettings[k];
-            }
-        }
+        runtime.applyConfDelta(message.userSettings);
         if ('theme' in message.userSettings) {
             setSanitizedContent(document.getElementById("sk_theme"), message.userSettings.theme);
         }

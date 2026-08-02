@@ -136,14 +136,6 @@ function readNativeSettings(onReady, onException) {
     }
 }
 
-function dictFromArray(arry, val) {
-    var dict = {};
-    arry.forEach(function(h) {
-        dict[h] = val;
-    });
-    return dict;
-}
-
 function extendObject(target, ss) {
     for (var k in ss) {
         target[k] = ss[k];
@@ -199,6 +191,45 @@ function _save(storage, data, cb) {
             storage.set(data, cb);
         }
     }
+}
+
+function loadRawSettingsFromStorage(keys, cb, defaultSet, options) {
+    var useSync = options && options.useSync;
+    var dropLocalPath = options && options.dropLocalPath;
+    var rawSet = defaultSet || {};
+    var serve = function() {
+        var subset = getSubSettings(rawSet, keys);
+        if (chrome.runtime.lastError) {
+            subset.error = "Settings sync may not work thoroughly because of: " + chrome.runtime.lastError.message;
+        }
+        cb(subset);
+    };
+    chrome.storage.local.get(null, function(localSet) {
+        if (!useSync) {
+            extendObject(rawSet, localSet);
+            serve();
+            return;
+        }
+        var localSavedAt = localSet.savedAt || 0;
+        chrome.storage.sync.get(null, function(syncSet) {
+            var syncSavedAt = syncSet.savedAt || 0;
+            if (localSavedAt > syncSavedAt) {
+                extendObject(rawSet, localSet);
+                _save(chrome.storage.sync, localSet, serve);
+            } else if (localSavedAt < syncSavedAt) {
+                if (dropLocalPath) {
+                    // don't sync local path
+                    delete syncSet.localPath;
+                }
+                extendObject(rawSet, syncSet);
+                serve();
+                _save(chrome.storage.local, syncSet);
+            } else {
+                extendObject(rawSet, localSet);
+                serve();
+            }
+        });
+    });
 }
 
 function _registerLlmProviders(llmConf) {
@@ -674,11 +705,10 @@ function start(browser) {
         });
     });
 
-    chrome.tabs.onCreated.addListener(function(tab) {
-        _updateTabIndices();
-    });
-    chrome.tabs.onMoved.addListener(function() {
-        _updateTabIndices();
+    ['onCreated', 'onMoved', 'onDetached', 'onAttached'].forEach(function(evt) {
+        chrome.tabs[evt].addListener(function() {
+            _updateTabIndices();
+        });
     });
     chrome.tabs.onActivated.addListener(function(activeInfo) {
         if (!historyTabAction && activeInfo.tabId != tabHistory[tabHistory.length - 1]) {
@@ -696,12 +726,6 @@ function start(browser) {
         historyTabAction = false;
         chromelikeNewTabPosition = 0;
 
-        _updateTabIndices();
-    });
-    chrome.tabs.onDetached.addListener(function() {
-        _updateTabIndices();
-    });
-    chrome.tabs.onAttached.addListener(function() {
         _updateTabIndices();
     });
 
@@ -2307,7 +2331,7 @@ function start(browser) {
                     }
                 }
                 if (message.host) {
-                    var hostsDict = dictFromArray(proxyConf.autoproxy_hosts[message.number], 1);
+                    var hostsDict = Object.fromEntries(proxyConf.autoproxy_hosts[message.number].map((h) => [h, 1]));
                     var hosts = message.host.split(/\s*[ ,\n]\s*/);
                     if (message.operation === "toggle") {
                         hosts.forEach(function(host) {
@@ -2762,9 +2786,7 @@ function start(browser) {
 }
 
 export {
-    _save,
-    dictFromArray,
     extendObject,
-    getSubSettings,
+    loadRawSettingsFromStorage,
     start
 };
