@@ -2946,6 +2946,19 @@ describe('start', () => {
                 expect.any(Function));
         });
 
+        it('injects the snippets again into a frame that rebuilt itself', async () => {
+            // document.open() leaves the frame's user script world without its listener.
+            const {chrome, dispatch} = bootstrap({
+                browser: {settings: {showAdvanced: true, snippets: 'api.map("a","b");'}},
+            });
+            chrome.userScripts.execute = jest.fn(() => Promise.resolve([]));
+            dispatch({action: 'injectUserScript'}, {tab: {...TABS[1]}, frameId: 0, url: TABS[1].url});
+            await flushPromises();
+            expect(chrome.userScripts.execute).toHaveBeenCalledWith(expect.objectContaining({
+                target: {tabId: 12, frameIds: [0]},
+            }));
+        });
+
         it.each([
             ['rejected', () => Promise.reject(new Error('Cannot access contents of the page'))],
             ['threw in the page', () => Promise.resolve([{error: 'Cannot access contents of the page'}])],

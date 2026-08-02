@@ -1845,6 +1845,15 @@ function start(browser) {
             });
         });
     }
+    // document.open() leaves a frame's user script world without its listener, so a
+    // frame that rebuilt itself asks for a fresh copy
+    self.injectUserScript = function(message, sender) {
+        loadSettings(['snippets', 'showAdvanced'], function(set) {
+            if (set.showAdvanced && set.snippets) {
+                injectSnippetsIntoTab(sender.tab.id, set.snippets, [sender.frameId]);
+            }
+        });
+    };
 
     // Runs snippet-supplied code in the page's MAIN world, where page globals
     // live. Only userScripts.execute accepts a code string for that world:

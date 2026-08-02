@@ -224,10 +224,12 @@ function maybeStartUserScript() {
         dispatchSKEvent('user', ["runUserScript"]);
     }
 }
-document.addEventListener(skEventName("userScriptListening"), () => {
+function onUserScriptListening() {
     userScriptListening = true;
     maybeStartUserScript();
-});
+}
+document.addEventListener(skEventName("userScriptListening"), onUserScriptListening);
+let restartUserScript = () => {};
 // Answered from whichever frame the user script asked in, so it is registered here
 // at load rather than with the modes: a frame's modes only boot on first focus or
 // keystroke, and the scope is the same either way. Registering it makes this frame a
@@ -238,6 +240,14 @@ if (chrome.runtime.getManifest().manifest_version === 3) {
         // Synchronous: runtime.js's listener does not hold the channel open.
         response({scope: skChannelScope()});
     });
+    // The document.open() that makes this frame rebuild itself took the user script
+    // world's listener and this one's too, so the snippets start over behind the same
+    // handshake, from a fresh copy that announces itself again.
+    restartUserScript = () => {
+        userScriptListening = settingsApplied = userScriptStarted = false;
+        document.addEventListener(skEventName("userScriptListening"), onUserScriptListening);
+        RUNTIME('injectUserScript');
+    };
 }
 
 Mode.init(window === top ? undefined : ()=> {
@@ -277,6 +287,7 @@ function start(browser) {
             runtime.on('titleChanged', function() {
                 Mode.checkEventListener(() => {
                     modes.front.detach();
+                    restartUserScript();
                     modes = _initModules();
                     _initContent(modes);
                     modes.front.attach();
