@@ -143,22 +143,56 @@ function start(browser) {
     }
 
     // in-memory settings cache, saves reading the whole storage(local + sync)
-    // on every message from content scripts; invalidated on any storage change,
-    // including our own _save calls.
+    // on every message from content scripts; our own writes are patched back in,
+    // only foreign changes(another device, settings reset) drop it.
     var _cachedSet = null;
-    chrome.storage.onChanged.addListener(function() {
-        _cachedSet = null;
+    // callers arriving while a load is in flight, all served from that single
+    // load instead of each reading the whole storage again
+    var _pendingLoads = null;
+    chrome.storage.onChanged.addListener(function(changes, areaName) {
+        if (!_cachedSet) {
+            return;
+        }
+        if (areaName === "local") {
+            for (var k in changes) {
+                if (!("newValue" in changes[k])) {
+                    // a key was removed(settings reset), reload from scratch
+                    _cachedSet = null;
+                    return;
+                }
+            }
+            for (var k in changes) {
+                _cachedSet[k] = changes[k].newValue;
+            }
+        } else if (!(changes.savedAt && changes.savedAt.newValue === _cachedSet.savedAt)) {
+            // a sync change that does not echo our own write(_save stamps both
+            // areas with the same savedAt) comes from another device, drop the
+            // cache so the next load reconciles by savedAt
+            _cachedSet = null;
+        }
     });
     function loadSettings(keys, cb) {
         // top-level fields are copied so that callers can decorate the result
         // without polluting the cache; nested objects stay shared with the cache,
-        // callers persist their mutations, which invalidates it.
+        // callers persist their mutations, which patches them back into the cache.
+        const serve = function(set) {
+            if (keys) {
+                cb(getSubSettings(set, keys));
+            } else {
+                var copy = {};
+                extendObject(copy, set);
+                cb(copy);
+            }
+        };
         if (_cachedSet) {
-            var cachedCopy = {};
-            extendObject(cachedCopy, _cachedSet);
-            cb(keys ? getSubSettings(_cachedSet, keys) : cachedCopy);
+            serve(_cachedSet);
             return;
         }
+        if (_pendingLoads) {
+            _pendingLoads.push(serve);
+            return;
+        }
+        _pendingLoads = [serve];
         var tmpSet = {
             blocklist: {},
             marks: {},
@@ -175,41 +209,48 @@ function start(browser) {
                 set.proxy = [set.proxy];
                 set.autoproxy_hosts = [set.autoproxy_hosts];
             }
-            const serve = function() {
-                var copy = {};
-                extendObject(copy, set);
-                cb(keys ? getSubSettings(set, keys) : copy);
+            const serveAll = function() {
+                const pending = _pendingLoads;
+                _pendingLoads = null;
+                pending.forEach((serveOne) => serveOne(set));
             };
             const done = function() {
                 _cachedSet = set;
-                serve();
+                serveAll();
             };
             if (!set.localPath) {
                 done();
             } else if (set.snippets) {
                 // stale-while-revalidate: serve the persisted snippets right away,
-                // refresh from localPath in background for the next page load
+                // refresh from localPath in background for the next page load;
+                // keyed loads never paid this fetch before the cache existed,
+                // keep it that way
                 done();
-                request(appendNonce(set.localPath), function(resp) {
-                    if (resp !== set.snippets) {
-                        _updateSettings({snippets: resp});
-                        if (set.showAdvanced) {
-                            registerUserScript(resp);
+                if (!keys) {
+                    request(appendNonce(set.localPath), function(resp) {
+                        if (resp !== set.snippets) {
+                            // local only: _save strips localPath snippets from sync
+                            // anyway(quota), and a content refresh is not a user
+                            // edit, so savedAt stays untouched
+                            chrome.storage.local.set({snippets: resp});
+                            if (set.showAdvanced) {
+                                registerUserScript(resp);
+                            }
                         }
-                    }
-                }, undefined, undefined, function() {
-                    // keep serving the stale snippets on refresh failures
-                    console.error("Failed to refresh snippets from " + set.localPath);
-                });
+                    }, undefined, undefined, function() {
+                        // keep serving the stale snippets on refresh failures
+                        console.error("Failed to refresh snippets from " + set.localPath);
+                    });
+                }
             } else {
                 request(appendNonce(set.localPath), function(resp) {
                     set.snippets = resp;
                     done();
-                }, undefined, undefined, function (po) {
+                }, undefined, undefined, function () {
                     // failed to read snippets from localPath; not cached, so the
                     // next load retries the fetch
                     set.error = "Failed to read snippets from " + set.localPath;
-                    serve();
+                    serveAll();
                 });
             }
         }, tmpSet);
