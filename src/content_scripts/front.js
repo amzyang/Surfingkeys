@@ -42,7 +42,42 @@ function createFront(insert, normal, hints, visual, browser) {
     }
 
     var _callbacks = {};
+    var _pendingBodyCommands = null;
+    function whenBodyReady(cb) {
+        if (document.body) {
+            cb();
+            return;
+        }
+        if (_pendingBodyCommands === null) {
+            _pendingBodyCommands = [];
+            const observer = new MutationObserver(() => {
+                if (document.body) {
+                    observer.disconnect();
+                    const pending = _pendingBodyCommands;
+                    _pendingBodyCommands = null;
+                    pending.forEach((cmd) => cmd());
+                }
+            });
+            observer.observe(document.documentElement, {childList: true});
+        }
+        _pendingBodyCommands.push(cb);
+    }
     self.command = function(args, successById) {
+        if (window === top && !frontendPromise) {
+            // no need to create frontend iframe for actions that only clear UI state
+            if (args.action === "hideKeystroke"
+                || (args.action === "showStatus" && (!args.contents || args.contents.every((c) => !c)))) {
+                return;
+            }
+            // frontend UI must be created after document.body is ready(#2132),
+            // queue commands issued before that instead of dropping them
+            if (document.body === null) {
+                whenBodyReady(function() {
+                    self.command(args, successById);
+                });
+                return;
+            }
+        }
         args.toFrontend = true;
         args.origin = getDocumentOrigin();
         args.id = generateQuickGuid();
@@ -54,11 +89,6 @@ function createFront(insert, normal, hints, visual, browser) {
             runtime.postTopMessage({surfingkeys_uihost_data: args});
         } else {
             if (!frontendPromise) {
-                // no need to create frontend iframe if the action is to hide key stroke
-                // and frontend UI must be created after document.body is ready(#2132)
-                if (args.action === "hideKeystroke" || document.body === null) {
-                    return;
-                }
                 newFrontEnd();
             }
             frontendPromise.then(function() {
@@ -812,10 +842,12 @@ function createFront(insert, normal, hints, visual, browser) {
             clearTimeout(uiHostDetaching);
             uiHostDetaching = undefined;
         }
-        if (!frontendPromise) {
-            newFrontEnd();
-        }
-        Mode.showStatus();
+        whenBodyReady(function() {
+            if (!frontendPromise) {
+                newFrontEnd();
+            }
+            Mode.showStatus();
+        });
     };
 
     self.detach = function() {
