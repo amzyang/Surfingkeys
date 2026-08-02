@@ -322,7 +322,23 @@ function start(browser) {
         }
     }
 
+    // in-memory settings cache, saves reading the whole storage(local + sync)
+    // on every message from content scripts; invalidated on any storage change,
+    // including our own _save calls.
+    var _cachedSet = null;
+    chrome.storage.onChanged.addListener(function() {
+        _cachedSet = null;
+    });
     function loadSettings(keys, cb) {
+        // top-level fields are copied so that callers can decorate the result
+        // without polluting the cache; nested objects stay shared with the cache,
+        // callers persist their mutations, which invalidates it.
+        if (_cachedSet) {
+            var cachedCopy = {};
+            extendObject(cachedCopy, _cachedSet);
+            cb(keys ? getSubSettings(_cachedSet, keys) : cachedCopy);
+            return;
+        }
         var tmpSet = {
             blocklist: {},
             marks: {},
@@ -334,24 +350,47 @@ function start(browser) {
             proxy: []
         };
 
-        browser.loadRawSettings(keys, function(set) {
+        browser.loadRawSettings(null, function(set) {
             if (typeof(set.proxy) === "string") {
                 set.proxy = [set.proxy];
                 set.autoproxy_hosts = [set.autoproxy_hosts];
             }
-            if (set.localPath) {
+            const serve = function() {
+                var copy = {};
+                extendObject(copy, set);
+                cb(keys ? getSubSettings(set, keys) : copy);
+            };
+            const done = function() {
+                _cachedSet = set;
+                serve();
+            };
+            const from = set.localPath === NATIVE_LOCAL_PATH ? "~/.surfingkeys.js" : set.localPath;
+            if (!set.localPath) {
+                done();
+            } else if (set.snippets) {
+                // stale-while-revalidate: serve the persisted snippets right away,
+                // refresh from localPath in background for the next page load
+                done();
                 readSnippets(set.localPath, function(resp) {
-                    set.snippets = resp;
-                    cb(set);
-                }, function (reason) {
-                    // The cached snippets stay in `set`, so the last copy read keeps
-                    // working while the banner says what went wrong.
-                    const from = set.localPath === NATIVE_LOCAL_PATH ? "~/.surfingkeys.js" : set.localPath;
-                    set.error = "Failed to read snippets from " + from + (reason ? ": " + reason : "");
-                    cb(set);
+                    if (resp !== set.snippets) {
+                        _updateSettings({snippets: resp});
+                        if (set.showAdvanced) {
+                            registerUserScript(resp);
+                        }
+                    }
+                }, function(reason) {
+                    // keep serving the stale snippets on refresh failures
+                    console.error("Failed to refresh snippets from " + from + (reason ? ": " + reason : ""));
                 });
             } else {
-                cb(set);
+                readSnippets(set.localPath, function(resp) {
+                    set.snippets = resp;
+                    done();
+                }, function (reason) {
+                    // not cached, so the next load retries the read
+                    set.error = "Failed to read snippets from " + from + (reason ? ": " + reason : "");
+                    serve();
+                });
             }
         }, tmpSet);
     }
