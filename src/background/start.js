@@ -1707,17 +1707,50 @@ function start(browser) {
     }
 
     function injectSnippetsIntoTab(tabId, snippets) {
-        chrome.scripting.executeScript({
+        // scripting.executeScript rejects world USER_SCRIPT; userScripts.execute
+        // (Chrome 135+) is the API for dynamic injection into that world
+        if (!chrome.userScripts.execute) {
+            return;
+        }
+        const rootUrl = chrome.runtime.getURL("/");
+        const code = `import('${rootUrl}api.js').then((module) => {module.default("${rootUrl}", (api, settings) => {${snippets}\n})});`;
+        // fails for tabs we cannot access(chrome://, web store, uncommitted navigations)
+        chrome.userScripts.execute({
             target: { tabId: tabId },
-            world: "USER_SCRIPT",
-            func: (snippets, rootUrl) => {
-                import(rootUrl + 'api.js').then((module) => {
-                    module.default(rootUrl, new Function('api', 'settings', snippets));
-                });
-            },
-            args: [snippets, chrome.runtime.getURL("/")]
+            js: [{code}]
+        }).then((results) => {
+            const failed = results.find((r) => r.error);
+            if (failed) {
+                throw new Error(failed.error);
+            }
+        }).catch((e) => {
+            // the page has no other way to learn its mappings are missing
+            console.error("Failed to inject the settings snippets into tab " + tabId, e);
+            sendTabMessage(tabId, 0, {
+                subject: 'showBanner',
+                message: "Settings snippets did not run here: " + e.message
+            });
         });
     }
+
+    // session-restored tabs whose navigation committed before Chrome finished
+    // restoring the persisted userScripts registration miss the document_start
+    // injection on browser startup; replay the snippets into them once.
+    chrome.runtime.onStartup.addListener(function() {
+        if (!isUserScriptsAvailable()) {
+            return;
+        }
+        loadSettings(['snippets', 'showAdvanced'], function(set) {
+            if (!set.showAdvanced || !set.snippets) {
+                return;
+            }
+            chrome.tabs.query({url: ["http://*/*", "https://*/*", "file:///*"], discarded: false}, function(tabs) {
+                tabs.forEach(function(tab) {
+                    injectSnippetsIntoTab(tab.id, set.snippets);
+                });
+            });
+        });
+    });
 
     function onFullSettingsRequested(data, callback) {
         data.isMV3 = isMV3;
