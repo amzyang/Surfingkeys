@@ -296,7 +296,7 @@ Mode.handleMapKey = function(event, onNoMatched) {
         this.map_node === this.mappings &&
         runtime.conf.digitForRepeat &&
         (key >= "1" || (this.repeats !== "" && key >= "0")) && key <= "9" &&
-        this.map_node.getWords().length > 0
+        this.map_node.hasMappings()
     ) {
         // reset only after target action executed or cancelled
         this.repeats += key;

@@ -240,16 +240,23 @@ function isElementVisible(elm) {
     return elm.offsetHeight > 0 && elm.offsetWidth > 0;
 }
 
+const CLICKABLE_SELECTOR = "a, button, select, input, textarea, summary, *[onclick], *[contenteditable=true], *.jfk-button, *.goog-flat-menu-button, *[role=button], *[role=link], *[role=menuitem], *[role=option], *[role=switch], *[role=tab], *[role=checkbox], *[role=combobox], *[role=menuitemcheckbox], *[role=menuitemradio]";
+let _clickableSelector = CLICKABLE_SELECTOR;
+let _clickableSelectorFrom;
 function isElementClickable(e) {
-    var cssSelector = "a, button, select, input, textarea, summary, *[onclick], *[contenteditable=true], *.jfk-button, *.goog-flat-menu-button, *[role=button], *[role=link], *[role=menuitem], *[role=option], *[role=switch], *[role=tab], *[role=checkbox], *[role=combobox], *[role=menuitemcheckbox], *[role=menuitemradio]";
-    if (runtime.conf.clickableSelector.length) {
-        cssSelector += ", " + runtime.conf.clickableSelector;
+    if (_clickableSelectorFrom !== runtime.conf.clickableSelector) {
+        _clickableSelectorFrom = runtime.conf.clickableSelector;
+        _clickableSelector = _clickableSelectorFrom.length
+            ? CLICKABLE_SELECTOR + ", " + _clickableSelectorFrom
+            : CLICKABLE_SELECTOR;
     }
 
-    return e.matches(cssSelector)
-        || getComputedStyle(e).cursor === "pointer"
-        || getComputedStyle(e).cursor.substr(0, 4) === "url("
-        || e.closest("a, *[onclick], *[contenteditable=true], *.jfk-button, *.goog-flat-menu-button") !== null;
+    if (e.matches(_clickableSelector)
+        || e.closest("a, *[onclick], *[contenteditable=true], *.jfk-button, *.goog-flat-menu-button") !== null) {
+        return true;
+    }
+    const cursor = getComputedStyle(e).cursor;
+    return cursor === "pointer" || cursor.substr(0, 4) === "url(";
 }
 
 /**
@@ -806,28 +813,31 @@ DOMRect.prototype.has = function (x, y, ex, ey) {
         && x > this.left - ex && x < this.right + ex);
 };
 
+const _l10nCache = {};
 function initL10n(cb) {
     const lang = runtime.conf.language || window.navigator.language;
     if (lang === "en-US") {
         cb(function(str) {
             return str;
         });
-    } else {
-        fetch(chrome.runtime.getURL("pages/l10n.json")).then(function(res) {
+        return;
+    }
+    if (!_l10nCache[lang]) {
+        _l10nCache[lang] = fetch(chrome.runtime.getURL("pages/l10n.json")).then(function(res) {
             return res.json();
         }).then(function(l10n) {
             if (typeof(l10n[lang]) === "object") {
-                l10n = l10n[lang];
-                cb(function(str) {
-                    return l10n[str] ? l10n[str] : str;
-                });
-            } else {
-                cb(function(str) {
-                    return str;
-                });
+                const dict = l10n[lang];
+                return function(str) {
+                    return dict[str] ? dict[str] : str;
+                };
             }
+            return function(str) {
+                return str;
+            };
         });
     }
+    _l10nCache[lang].then(cb);
 }
 
 String.prototype.format = function() {
@@ -1106,7 +1116,11 @@ function refreshHints(hints, pressedKeys) {
                 break;
             } else if (label.indexOf(pressedKeys) === 0) {
                 hint.style.opacity = 1;
-                setSanitizedContent(hint, `<span style="opacity: 0.2;">${pressedKeys}</span>` + label.substr(pressedKeys.length));
+                hint.textContent = "";
+                const pressed = document.createElement("span");
+                pressed.style.opacity = "0.2";
+                pressed.textContent = pressedKeys;
+                hint.append(pressed, label.substr(pressedKeys.length));
                 result.candidates ++;
             } else {
                 hint.style.opacity = 0;
@@ -1118,7 +1132,7 @@ function refreshHints(hints, pressedKeys) {
         } else {
             for (const hint of hints) {
                 hint.style.opacity = 1;
-                setSanitizedContent(hint, hint.label);
+                hint.textContent = hint.label;
             }
             result.candidates = hints.length;
         }
