@@ -274,7 +274,9 @@ function start(browser) {
                 _tabActivated(tabId);
             }
         }
-        if (browser.detectTabTitleChange && changeInfo.title) {
+        // url changes(SPA history navigation included) also trigger the event
+        // listener check, as sites may replace the document without a title change
+        if (browser.detectTabTitleChange && (changeInfo.title || changeInfo.url)) {
             sendTabMessage(tabId, 0, {
                 subject: 'titleChanged',
                 changeInfo
