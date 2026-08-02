@@ -10,7 +10,6 @@ import {
     isInUIFrame,
     mapInMode,
     scrollIntoViewIfNeeded,
-    setSanitizedContent,
     showBanner,
     showPopup,
 } from './utils.js';
@@ -352,11 +351,6 @@ function createNormal(insert) {
     var scrollNodes, scrollIndex = 0,
         lastKeys;
 
-    function easeFn(t, b, c, d) {
-        // t: current time, b: begInnIng value, c: change In value, d: duration
-        return (t === d) ? b + c : c * (-Math.pow(2, -10 * t / d) + 1) + b;
-    }
-
     var _nodesHasSKScroll = [];
     function initScroll(elm) {
         elm.skScrollBy = function(x, y) {
@@ -547,7 +541,7 @@ function createNormal(insert) {
      * @name Normal.scroll
      *
      */
-    self.scroll = function(type) {
+    function getScrollTarget() {
         initScrollIndex();
         var scrollNode = document.scrollingElement;
         if (scrollNodes.length > 0) {
@@ -562,6 +556,11 @@ function createNormal(insert) {
                 }
             }
         }
+        return scrollNode;
+    }
+
+    self.scroll = function(type) {
+        var scrollNode = getScrollTarget();
         if (!scrollNode && !document.scrollingElement && document.body) {
             // to set document.body.style.overflow auto will make document.scrollingElement null
             // set visible to bring it back.
@@ -667,17 +666,8 @@ function createNormal(insert) {
      *
      * @param {string} keys the keys to be fed into Normal mode.
      * @name Normal.feedkeys
-     *
+     * @function
      */
-    self.feedkeys = function(keys) {
-        setTimeout(function() {
-            var evt = new Event("keydown");
-            for (var i = 0; i < keys.length; i ++) {
-                evt.sk_keyName = keys[i];
-                Mode.handleMapKey.call(self, evt);
-            }
-        }, 1);
-    };
 
     self.setLastKeys = function(key) {
         if (!this.map_node.meta.repeatIgnore && key.length > 1) {
@@ -723,30 +713,20 @@ function createNormal(insert) {
      */
     self.jumpVIMark = function(mark) {
         if (mark === "'") {
-            let scrollNode = document.scrollingElement;
-            initScrollIndex();
-            if (scrollNodes.length > 0) {
-                scrollNode = scrollNodes[scrollIndex];
-                if (scrollNode.lastScrollTop !== undefined && scrollNode.lastScrollLeft !== undefined) {
-                    const lt = scrollNode.scrollTop;
-                    const ll = scrollNode.scrollLeft;
-                    scrollNode.scrollTop = scrollNode.lastScrollTop;
-                    scrollNode.scrollLeft = scrollNode.lastScrollLeft;
-                    scrollNode.lastScrollTop = lt;
-                    scrollNode.lastScrollLeft = ll;
-                }
+            const scrollNode = getScrollTarget();
+            if (scrollNode && scrollNode.lastScrollTop !== undefined && scrollNode.lastScrollLeft !== undefined) {
+                const lt = scrollNode.scrollTop;
+                const ll = scrollNode.scrollLeft;
+                scrollNode.scrollTop = scrollNode.lastScrollTop;
+                scrollNode.scrollLeft = scrollNode.lastScrollLeft;
+                scrollNode.lastScrollTop = lt;
+                scrollNode.lastScrollLeft = ll;
             }
         } else {
             RUNTIME('jumpVIMark', {
                 mark: mark
             });
         }
-    };
-
-    self.moveTab = function(pos) {
-        RUNTIME('moveTab', {
-            position: pos
-        });
     };
 
     self.captureElement = function(elm) {
@@ -865,12 +845,7 @@ function createNormal(insert) {
         annotation: "Capture scrolling element",
         feature_group: 7,
         code: function() {
-            var scrollNode = document.scrollingElement;
-            initScrollIndex();
-            if (scrollNodes.length > 0) {
-                scrollNode = scrollNodes[scrollIndex];
-            }
-            self.captureElement(scrollNode);
+            self.captureElement(getScrollTarget());
         }
     });
 
@@ -878,11 +853,9 @@ function createNormal(insert) {
         annotation: "Reset scroll target",
         feature_group: 2,
         code: function() {
-            scrollNodes = null;
-            initScrollIndex();
+            self.refreshScrollableElements();
             if (scrollNodes.length > 0) {
-                var scrollNode = scrollNodes[scrollIndex];
-                self.highlightElement(scrollNode);
+                self.highlightElement(scrollNodes[scrollIndex]);
             }
         }
     });
@@ -898,83 +871,28 @@ function createNormal(insert) {
         return bound && bound.meta && bound.meta.code && bound.meta.code.isSKScrollInHints;
     };
 
-    self.mappings.add("e", {
-        annotation: "Scroll half page up",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: self.scroll.bind(self, "pageUp")
-    });
-    self.mappings.add("U", {
-        annotation: "Scroll full page up",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: self.scroll.bind(self, "fullPageUp")
-    });
-    self.mappings.add("d", {
-        annotation: "Scroll half page down",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: self.scroll.bind(self, "pageDown")
-    });
-    self.mappings.add("P", {
-        annotation: "Scroll full page down",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: self.scroll.bind(self, "fullPageDown")
-    });
-    self.mappings.add("gg", {
-        annotation: "Scroll to the top of the page",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: self.scroll.bind(self, "top")
-    });
-    self.mappings.add("G", {
-        annotation: "Scroll to the bottom of the page",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: bindScrollForHints("bottom")
-    });
-    self.mappings.add("j", {
-        annotation: "Scroll down",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: bindScrollForHints("down")
-    });
-    self.mappings.add("k", {
-        annotation: "Scroll up",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: bindScrollForHints("up")
-    });
-    self.mappings.add("h", {
-        annotation: "Scroll left",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: bindScrollForHints("left")
-    });
-    self.mappings.add("l", {
-        annotation: "Scroll right",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: bindScrollForHints("right")
-    });
-    self.mappings.add("0", {
-        annotation: "Scroll all the way to the left",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: bindScrollForHints("leftmost")
-    });
-    self.mappings.add("$", {
-        annotation: "Scroll all the way to the right",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: bindScrollForHints("rightmost")
-    });
-    self.mappings.add("%", {
-        annotation: "Scroll to percentage of current page",
-        feature_group: 2,
-        repeatIgnore: true,
-        code: self.scroll.bind(self, "byRatio")
+    [
+        // [key, annotation, scroll type, usable to scroll in Hints mode]
+        ["e", "Scroll half page up", "pageUp"],
+        ["U", "Scroll full page up", "fullPageUp"],
+        ["d", "Scroll half page down", "pageDown"],
+        ["P", "Scroll full page down", "fullPageDown"],
+        ["gg", "Scroll to the top of the page", "top"],
+        ["G", "Scroll to the bottom of the page", "bottom", true],
+        ["j", "Scroll down", "down", true],
+        ["k", "Scroll up", "up", true],
+        ["h", "Scroll left", "left", true],
+        ["l", "Scroll right", "right", true],
+        ["0", "Scroll all the way to the left", "leftmost", true],
+        ["$", "Scroll all the way to the right", "rightmost", true],
+        ["%", "Scroll to percentage of current page", "byRatio"],
+    ].forEach(([key, annotation, type, inHints]) => {
+        self.mappings.add(key, {
+            annotation,
+            feature_group: 2,
+            repeatIgnore: true,
+            code: inHints ? bindScrollForHints(type) : self.scroll.bind(self, type)
+        });
     });
     self.mappings.add("cs", {
         annotation: "Change scroll target",

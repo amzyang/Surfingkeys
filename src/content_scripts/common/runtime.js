@@ -30,9 +30,6 @@ function RUNTIME(action, args, callback) {
     try {
         args.needResponse = callback !== undefined;
         chrome.runtime.sendMessage(args, callback);
-        if (action === 'read') {
-            runtime.on('onTtsEvent', callback);
-        }
     } catch (e) {
         dispatchSKEvent("front", ['showPopup', '[runtime exception] ' + e]);
     }
@@ -81,7 +78,6 @@ const runtime = (function() {
             editableBodyCare: true,
             enableAutoFocus: true,
             enableEmojiInsertion: false,
-            experiment: false,
             focusFirstCandidate: false,
             focusOnSaved: true,
             hintAlign: "center",
@@ -135,6 +131,19 @@ const runtime = (function() {
         }
     });
 
+    // copy keys of delta that runtime.conf owns into it; with consume true,
+    // consumed keys are removed from delta so the caller can forward the rest
+    self.applyConfDelta = function(delta, consume) {
+        for (var k in delta) {
+            if (self.conf.hasOwnProperty(k)) {
+                self.conf[k] = delta[k];
+                if (consume) {
+                    delete delta[k];
+                }
+            }
+        }
+        return delta;
+    };
     self.on = function(message, cb) {
         _handlers[message] = cb;
     };
@@ -155,12 +164,6 @@ const runtime = (function() {
             _handlers[msg.subject](msg, sender, response);
         }
     });
-
-    self.getTopURL = function(cb) {
-        getTopURLPromise.then(function(url) {
-            cb(url);
-        });
-    };
 
     self.postTopMessage = function(msg) {
         getTopURLPromise.then(function(topUrl) {
