@@ -10,9 +10,21 @@ import KeyboardUtils from './keyboardUtils';
 var mode_stack = [];
 
 const Mode = function(name, statusLine) {
+    const self = this;
     this.name = name;
     this.statusLine = statusLine;
     this.eventListeners = {};
+    // closure-captured self so that the function keeps working when detached,
+    // e.g. exposed as api.Normal.feedkeys
+    this.feedkeys = function(keys) {
+        setTimeout(function() {
+            var evt = new Event("keydown");
+            for (var i = 0; i < keys.length; i ++) {
+                evt.sk_keyName = keys[i];
+                Mode.handleMapKey.call(self, evt);
+            }
+        }, 1);
+    };
     this.addEventListener = function(evtName, handler) {
         this.eventListeners[evtName] = handler;
 

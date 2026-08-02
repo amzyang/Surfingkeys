@@ -197,6 +197,19 @@ const runtime = (function() {
         }
     });
 
+    // copy keys of delta that runtime.conf owns into it; with consume true,
+    // consumed keys are removed from delta so the caller can forward the rest
+    self.applyConfDelta = function(delta, consume) {
+        for (var k in delta) {
+            if (self.conf.hasOwnProperty(k)) {
+                self.conf[k] = delta[k];
+                if (consume) {
+                    delete delta[k];
+                }
+            }
+        }
+        return delta;
+    };
     self.on = function(message, cb) {
         _handlers[message] = cb;
         _listen();

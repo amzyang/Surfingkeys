@@ -538,12 +538,7 @@ function createFront(insert, normal, hints, visual, browser) {
             });
             const cloneUS = JSON.parse(JSON.stringify(us));
             // overrides local settings from snippets
-            for (var k in cloneUS) {
-                if (runtime.conf.hasOwnProperty(k)) {
-                    runtime.conf[k] = cloneUS[k];
-                    delete cloneUS[k];
-                }
-           }
+            runtime.applyConfDelta(cloneUS, true);
             if (runtime.conf.enableEmojiInsertion) {
                 insert.enableEmojiInsertion();
             }

@@ -802,12 +802,16 @@ div.hint-scrollable {
         hintsHost.shadowRoot.appendChild(holder);
     }
 
-    function createHintsForElements(elements, attrs) {
+    function applyHintAttrs(attrs, defaultStatusLine) {
         attrs = attrs || {};
         for (var attr in attrs) {
             behaviours[attr] = attrs[attr];
         }
-        self.statusLine = (attrs && attrs.statusLine) || "Hints to click";
+        self.statusLine = attrs.statusLine || defaultStatusLine;
+    }
+
+    function createHintsForElements(elements, attrs) {
+        applyHintAttrs(attrs, "Hints to click");
 
         elements = filterInvisibleElements(elements);
         if (elements.length > 0) {
@@ -817,12 +821,8 @@ div.hint-scrollable {
     }
 
     function createHintsForClick(cssSelector, attrs) {
-        attrs = attrs || {};
-        self.statusLine = attrs.statusLine || "Hints to click";
+        applyHintAttrs(attrs, "Hints to click");
 
-        for (var attr in attrs) {
-            behaviours[attr] = attrs[attr];
-        }
         let elements;
         if (cssSelector === "") {
             elements = getVisibleElements(function(e, v) {
@@ -851,10 +851,7 @@ div.hint-scrollable {
     }
 
     function createHintsForTextNode(rxp, attrs) {
-        for (var attr in attrs) {
-            behaviours[attr] = attrs[attr];
-        }
-        self.statusLine = (attrs && attrs.statusLine) || "Hints to select text";
+        applyHintAttrs(attrs, "Hints to select text");
 
         var elements = getVisibleElements(function(e, v) {
             var aa = e.childNodes;
