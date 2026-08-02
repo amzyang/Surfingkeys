@@ -1212,8 +1212,20 @@ function start(browser) {
         message.url = 'view-source:' + sender.tab.url;
         self.openLink(message, sender, sendResponse);
     };
+    // the \n keeps a trailing line comment in the user's snippets from eating
+    // the closing braces; the api.js specifier differs between the registered
+    // script('./api.js', kept byte-identical with persisted registrations) and
+    // dynamic execution(absolute URL)
+    function buildSnippetsCode(snippets, apiSpecifier) {
+        return `import('${apiSpecifier}').then((module) => {module.default("${chrome.runtime.getURL("/")}", (api, settings) => {${snippets}\n})});`;
+    }
+    // last snippets known registered(null = known unregistered), saves a
+    // userScripts.getScripts round trip + full code compare on every frame's
+    // getSettings; undefined = unknown, forces a real check on the next call
+    var _registeredSnippets;
     function registerUserScript(snippets, callback) {
-        if (!isUserScriptsAvailable()) {
+        snippets = snippets || null;
+        if (!isUserScriptsAvailable() || snippets === _registeredSnippets) {
             callback && callback();
             return;
         }
@@ -1221,6 +1233,9 @@ function start(browser) {
         const invokeCallback = () => {
             if (chrome.runtime.lastError) {
                 console.error("userScripts API error:", chrome.runtime.lastError);
+                _registeredSnippets = undefined;
+            } else {
+                _registeredSnippets = snippets;
             }
             callback && callback();
         };
@@ -1231,7 +1246,7 @@ function start(browser) {
                     callback && callback();
                     return;
                 }
-                const code = `import('./api.js').then((module) => {module.default("${chrome.runtime.getURL("/")}", (api, settings) => {${snippets}\n})});`;
+                const code = buildSnippetsCode(snippets, './api.js');
                 // document_start so that user mappings become usable along with built-in
                 // ones, instead of waiting for document_idle(after page load).
                 const runAt = "document_start";
@@ -1249,6 +1264,7 @@ function start(browser) {
                     if (r[0].js[0].code !== code || r[0].runAt !== runAt) {
                         chrome.userScripts.unregister({ids:[userScriptId]}, registerSettingSnippets);
                     } else {
+                        _registeredSnippets = snippets;
                         callback && callback();
                     }
                 } else {
@@ -1265,6 +1281,7 @@ function start(browser) {
                 if (r.length > 0) {
                     chrome.userScripts.unregister({ids:[userScriptId]}, invokeCallback);
                 } else {
+                    _registeredSnippets = null;
                     callback && callback();
                 }
             });
@@ -1274,11 +1291,10 @@ function start(browser) {
     function injectSnippetsIntoTab(tabId, snippets) {
         // scripting.executeScript rejects world USER_SCRIPT; userScripts.execute
         // (Chrome 135+) is the API for dynamic injection into that world
-        if (!chrome.userScripts.execute) {
+        if (!isUserScriptsAvailable() || !chrome.userScripts.execute) {
             return;
         }
-        const rootUrl = chrome.runtime.getURL("/");
-        const code = `import('${rootUrl}api.js').then((module) => {module.default("${rootUrl}", (api, settings) => {${snippets}\n})});`;
+        const code = buildSnippetsCode(snippets, chrome.runtime.getURL("/") + 'api.js');
         // fails for tabs we cannot access(chrome://, web store, uncommitted navigations)
         chrome.userScripts.execute({
             target: { tabId: tabId },
