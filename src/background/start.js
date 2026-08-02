@@ -32,6 +32,8 @@ function request(url, onReady, headers, data, onException) {
 // Without a deadline, a host that stays alive but answers nothing leaves getSettings
 // unanswered and the page runs no user settings at all.
 const NATIVE_SETTINGS_TIMEOUT = 5000;
+// fetch has no deadline of its own, and a refresh in flight holds off the next one
+const SNIPPETS_REFRESH_TIMEOUT = 5000;
 
 // Callbacks waiting on the read that is currently running, or null when none is.
 let nativeSettingsWaiters = null;
@@ -366,22 +368,116 @@ function start(browser) {
     }
 
     // in-memory settings cache, saves reading the whole storage(local + sync)
-    // on every message from content scripts; invalidated on any storage change,
-    // including our own _save calls.
+    // on every message from content scripts; our own writes are patched back in,
+    // only foreign changes(another device, settings reset) drop it.
     var _cachedSet = null;
-    chrome.storage.onChanged.addListener(function() {
+    // callers arriving while a load is in flight, all served from that single
+    // load instead of each reading the whole storage again
+    var _pendingLoads = null;
+    // the refresh in flight, if any; a reply only lands while it is still this one
+    var _snippetsRefresh = null;
+    function dropSettingsCache() {
         _cachedSet = null;
+        _snippetsRefresh = null;
+    }
+    chrome.storage.onChanged.addListener(function(changes, areaName) {
+        if (!_cachedSet) {
+            return;
+        }
+        if (areaName === "local") {
+            for (var k in changes) {
+                if (!("newValue" in changes[k])) {
+                    // a key was removed(settings reset), reload from scratch
+                    dropSettingsCache();
+                    return;
+                }
+            }
+            for (var k in changes) {
+                _cachedSet[k] = changes[k].newValue;
+            }
+        } else if (!(changes.savedAt && changes.savedAt.newValue === _cachedSet.savedAt)) {
+            // a sync change that does not echo our own write(_save stamps both
+            // areas with the same savedAt) comes from another device, drop the
+            // cache so the next load reconciles by savedAt
+            dropSettingsCache();
+        }
     });
+    // Rereads localPath behind a load served from the cache, so an edit to the file
+    // reaches the page loads after it. The frames of one page share a single read.
+    function refreshSnippets() {
+        if (_snippetsRefresh) {
+            return;
+        }
+        const set = _cachedSet;
+        const refresh = {};
+        _snippetsRefresh = refresh;
+        const from = set.localPath === NATIVE_LOCAL_PATH ? "~/.surfingkeys.js" : set.localPath;
+        const settle = () => {
+            const current = _snippetsRefresh === refresh;
+            if (current) {
+                _snippetsRefresh = null;
+                clearTimeout(deadline);
+            }
+            return current;
+        };
+        // the stale snippets keep being served; the error is for the options page banner
+        const fail = (reason) => {
+            set.error = "Failed to refresh snippets from " + from + (reason ? ": " + reason : "");
+            console.error(set.error);
+        };
+        const deadline = setTimeout(() => {
+            if (settle()) {
+                fail("no answer within " + SNIPPETS_REFRESH_TIMEOUT / 1000 + " seconds");
+            }
+        }, SNIPPETS_REFRESH_TIMEOUT);
+        readSnippets(set.localPath, function(resp) {
+            if (!settle()) {
+                return;
+            }
+            delete set.error;
+            if (resp === set.snippets) {
+                return;
+            }
+            // patched in place: onChanged arrives asynchronously, after the next
+            // load may already have been served
+            set.snippets = resp;
+            // local only: _save strips localPath snippets from sync anyway(quota),
+            // and a content refresh is not a user edit, so savedAt stays untouched
+            chrome.storage.local.set({snippets: resp});
+            if (set.showAdvanced) {
+                registerUserScript(resp);
+            }
+        }, function(reason) {
+            if (settle()) {
+                fail(reason);
+            }
+        });
+    }
     function loadSettings(keys, cb) {
         // top-level fields are copied so that callers can decorate the result
         // without polluting the cache; nested objects stay shared with the cache,
-        // callers persist their mutations, which invalidates it.
+        // callers persist their mutations, which patches them back into the cache.
+        const serve = function(set) {
+            if (keys) {
+                cb(getSubSettings(set, keys));
+            } else {
+                var copy = {};
+                extendObject(copy, set);
+                cb(copy);
+            }
+        };
         if (_cachedSet) {
-            var cachedCopy = {};
-            extendObject(cachedCopy, _cachedSet);
-            cb(keys ? getSubSettings(_cachedSet, keys) : cachedCopy);
+            serve(_cachedSet);
+            if (!keys && _cachedSet.localPath) {
+                refreshSnippets();
+            }
             return;
         }
+        if (_pendingLoads) {
+            _pendingLoads.push(serve);
+            return;
+        }
+        _pendingLoads = [serve];
         var tmpSet = {
             blocklist: {},
             marks: {},
@@ -398,41 +494,33 @@ function start(browser) {
                 set.proxy = [set.proxy];
                 set.autoproxy_hosts = [set.autoproxy_hosts];
             }
-            const serve = function() {
-                var copy = {};
-                extendObject(copy, set);
-                cb(keys ? getSubSettings(set, keys) : copy);
+            const serveAll = function() {
+                const pending = _pendingLoads;
+                _pendingLoads = null;
+                pending.forEach((serveOne) => serveOne(set));
             };
             const done = function() {
                 _cachedSet = set;
-                serve();
+                serveAll();
             };
-            const from = set.localPath === NATIVE_LOCAL_PATH ? "~/.surfingkeys.js" : set.localPath;
             if (!set.localPath) {
                 done();
             } else if (set.snippets) {
-                // stale-while-revalidate: serve the persisted snippets right away,
-                // refresh from localPath in background for the next page load
+                // serve the persisted snippets right away; keyed loads never paid
+                // this read before the cache existed, keep it that way
                 done();
-                readSnippets(set.localPath, function(resp) {
-                    if (resp !== set.snippets) {
-                        _updateSettings({snippets: resp});
-                        if (set.showAdvanced) {
-                            registerUserScript(resp);
-                        }
-                    }
-                }, function(reason) {
-                    // keep serving the stale snippets on refresh failures
-                    console.error("Failed to refresh snippets from " + from + (reason ? ": " + reason : ""));
-                });
+                if (!keys) {
+                    refreshSnippets();
+                }
             } else {
+                const from = set.localPath === NATIVE_LOCAL_PATH ? "~/.surfingkeys.js" : set.localPath;
                 readSnippets(set.localPath, function(resp) {
                     set.snippets = resp;
                     done();
                 }, function (reason) {
                     // not cached, so the next load retries the read
                     set.error = "Failed to read snippets from " + from + (reason ? ": " + reason : "");
-                    serve();
+                    serveAll();
                 });
             }
         }, tmpSet);
@@ -903,6 +991,8 @@ function start(browser) {
     };
 
     self.resetSettings = function(message, sender, sendResponse) {
+        // onChanged reports the clear only after the load below has been served
+        dropSettingsCache();
         chrome.storage.local.clear();
         chrome.storage.sync.clear();
         loadSettings(null, function(data) {
