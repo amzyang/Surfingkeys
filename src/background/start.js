@@ -329,8 +329,7 @@ function start(browser) {
         focusAfterClosed: "right",
         tabsMRUOrder: true,
         newTabPosition: 'default',
-        showTabIndices: false,
-        interceptedErrors: []
+        showTabIndices: false
     };
 
     var bookmarkFolders = [];
@@ -527,7 +526,7 @@ function start(browser) {
     }
 
     loadSettings(null, function(data) {
-        browser._applyProxySettings(data);
+        browser._applyProxySettings?.(data);
     });
 
     /*
@@ -754,12 +753,7 @@ function start(browser) {
         }
     });
 
-    self.pendingPorts = [];
     function _response(message, sendResponse, result) {
-        var idx = self.pendingPorts.indexOf(message);
-        if (idx !== -1) {
-            self.pendingPorts.splice(idx, 1);
-        }
         sendResponse(result);
     }
     function handleMessage(_message, _sender, _sendResponse) {
@@ -769,10 +763,8 @@ function start(browser) {
                 if (result) {
                     _sendResponse(result);
                     _message.needResponse = false;
-                } else {
-                    self.pendingPorts.push(_message);
-                    // An asynchronous response will be sent using sendResponse later.
                 }
+                // else an asynchronous response will be sent using sendResponse later.
                 return _message.needResponse;
             }
         } else {
@@ -800,9 +792,8 @@ function start(browser) {
         diffSettings.savedAt = new Date().getTime();
         _save(chrome.storage.local, diffSettings, function() {
             _save(chrome.storage.sync, diffSettings, function() {
-                if (chrome.runtime.lastError) {
-                    var error = chrome.runtime.lastError.message;
-                }
+                // read lastError to suppress "Unchecked runtime.lastError"
+                void chrome.runtime.lastError;
             });
             if (afterSet) {
                 afterSet();
@@ -885,20 +876,6 @@ function start(browser) {
                     url: origin
                 });
             });
-        });
-    };
-    self.toggleMouseQuery = function(message, sender, sendResponse) {
-        loadSettings('mouseSelectToQuery', function(data) {
-            if (sender.tab && sender.tab.url.indexOf(chrome.runtime.getURL("/")) !== 0) {
-                var mouseSelectToQuery = data.mouseSelectToQuery || [];
-                var idx = mouseSelectToQuery.indexOf(message.origin);
-                if (idx === -1) {
-                    mouseSelectToQuery.push(message.origin);
-                } else {
-                    mouseSelectToQuery.splice(idx, 1);
-                }
-                _updateAndPostSettings({mouseSelectToQuery: mouseSelectToQuery});
-            }
         });
     };
     self.getState = function(message, sender, sendResponse) {
@@ -996,7 +973,7 @@ function start(browser) {
         chrome.storage.local.clear();
         chrome.storage.sync.clear();
         loadSettings(null, function(data) {
-            browser._applyProxySettings(data);
+            browser._applyProxySettings?.(data);
             _response(message, sendResponse, {
                 settings: data
             });
@@ -1076,7 +1053,7 @@ function start(browser) {
 
 
     function _getHistory(text, maxResults, cb, sortByMostUsed) {
-        browser.getLatestHistoryItem(text, maxResults, (items) => {
+        browser.getLatestHistoryItem?.(text, maxResults, (items) => {
             if (sortByMostUsed) {
                 items = items.sort(function(a, b) {
                     return b.visitCount - a.visitCount;
@@ -2358,7 +2335,7 @@ function start(browser) {
                 proxy: proxyConf.proxy
             };
             _updateAndPostSettings(diffSet);
-            browser._applyProxySettings(proxyConf);
+            browser._applyProxySettings?.(proxyConf);
             cb && cb(diffSet);
         });
     }
@@ -2545,17 +2522,6 @@ function start(browser) {
     self.openIncognito = function(message, sender, sendResponse) {
         chrome.windows.create({"url": message.url, "incognito": true});
     };
-
-    var userAgent;
-    function onBeforeSendHeaders(details) {
-        for (var i = 0; i < details.requestHeaders.length; ++i) {
-            if (details.requestHeaders[i].name === 'User-Agent') {
-                details.requestHeaders[i].value = userAgent;
-                break;
-            }
-        }
-        return {requestHeaders: details.requestHeaders};
-    }
 
     // Safari writes through the native app, which sets the system pasteboard
     // directly, rather than through navigator.clipboard.writeText here: that call
@@ -2772,7 +2738,6 @@ function start(browser) {
         });
     };
 
-    self.getContainerName = browser._getContainerName(self, _response);
     self.getContainers = browser._getContainers ? browser._getContainers(self, _response) : function(message, sender, sendResponse) {
         _response(message, sendResponse, { containers: [] });
     };

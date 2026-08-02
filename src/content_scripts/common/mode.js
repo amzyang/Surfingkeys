@@ -43,16 +43,11 @@ const Mode = function(name, statusLine) {
                 var modeList = mode_stack.map(function(u) { return u.name; }).join(',');
                 reportIssue("Mode {0} pushed into mode stack again.".format(this.name), "Modes in stack: {0}".format(modeList));
             }
-            // stackTrace();
         }
 
         mode_stack.sort(function(a,b) {
             return (a.priority < b.priority) ? 1 : ((b.priority < a.priority) ? -1 : 0);
         } );
-        // var modes = mode_stack.map(function(m) {
-        // return m.name;
-        // }).join('->');
-        // console.log('enter {0}, {1}'.format(this.name, modes));
 
         this.onEnter && this.onEnter();
 
@@ -70,14 +65,8 @@ const Mode = function(name, statusLine) {
             } else {
                 // otherwise, we just pop all modes above this inclusively.
                 pos++;
-                var popup = mode_stack.slice(0, pos);
                 mode_stack = mode_stack.slice(pos);
             }
-
-            // var modes = mode_stack.map(function(m) {
-            // return m.name;
-            // }).join('->');
-            // console.log('exit {0}, {1}'.format(this.name, modes));
         }
         Mode.showStatus();
         this.onExit && this.onExit(pos);

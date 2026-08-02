@@ -15,7 +15,6 @@ import {
     locateFocusNode,
     scrollIntoViewIfNeeded,
     setSanitizedContent,
-    tabOpenLink,
 } from './utils.js';
 
 function createVisual(clipboard, hints) {

@@ -2,7 +2,6 @@ import { RUNTIME, dispatchSKEvent, runtime, skEventName } from './runtime.js';
 import KeyboardUtils from './keyboardUtils';
 import { selectionToMarkdown } from './pageMarkdown.js';
 import {
-    actionWithSelectionPreserved,
     createElementWithContent,
     flashPressedLink,
     getBrowserName,
@@ -401,21 +400,6 @@ export default function(api, clipboard, insert, normal, hints, visual, front, br
             dispatchSKEvent("front", ['showBubble', pos, queryResult, true]);
         });
     });
-
-    function getSentence(textNode, offset) {
-        var sentence = "";
-
-        actionWithSelectionPreserved(function(sel) {
-            sel.setPosition(textNode, offset);
-            sel.modify("extend", "backward", "sentence");
-            sel.collapseToStart();
-            sel.modify("extend", "forward", "sentence");
-
-            sentence = sel.toString();
-        });
-
-        return sentence.replace(/\n/g, '');
-    }
 
     mapkey("cq", '#7Query word with Hints', function() {
         hints.create(runtime.conf.textAnchorPat, function (element) {

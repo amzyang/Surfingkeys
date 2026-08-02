@@ -33,28 +33,12 @@ function loadRawSettings(keys, cb, defaultSet) {
     });
 }
 
-function _applyProxySettings(proxyConf) {
-}
-
 function _setNewTabUrl(){
     return  "favorites://";
 }
 
-function _getContainerName(self, _response){
-}
-
-function _getContainers(self, _response){
-}
-
-function getLatestHistoryItem(text, maxResults, cb) {
-}
-
 start({
     name: "Safari",
-    getLatestHistoryItem,
     loadRawSettings,
-    _applyProxySettings,
-    _setNewTabUrl,
-    _getContainerName,
-    _getContainers
+    _setNewTabUrl
 });
