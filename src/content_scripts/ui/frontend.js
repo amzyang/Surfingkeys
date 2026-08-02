@@ -126,24 +126,8 @@ const Front = (function() {
             var visibleDivs = Array.from(document.body.querySelectorAll("body>div")).filter(function(n) {
                 return n.style.display !== "none";
             });
-            var pointerEvents = visibleDivs.map(function(d) {
-                var id = d.id;
-                var divNoPointerEvents = ["sk_keystroke", "sk_banner"];
-                if (divNoPointerEvents.indexOf(id) !== -1) {
-                    // no pointerEvents for bubble
-                    return false;
-                } else if (id === "sk_status") {
-                    // only pointerEvents when input in statusBar
-                    return self.statusBar.querySelector('input') !== null;
-                } else {
-                    // with pointerEvents for all other DIVs except that noPointerEvents is set.
-                    return !d.noPointerEvents;
-                }
-            });
-            // to make pointerEvents not empty
-            pointerEvents.push(false);
-            pointerEvents = pointerEvents.reduce(function(a, b) {
-                return a || b;
+            var pointerEvents = visibleDivs.some(function(d) {
+                return !d.noPointerEvents;
             });
 
             var ns;
@@ -181,12 +165,17 @@ const Front = (function() {
 
     const _omnibar = document.getElementById('sk_omnibar');
     self.statusBar = document.getElementById('sk_status');
+    Object.defineProperty(self.statusBar, 'noPointerEvents', {
+        // pointerEvents only when there is an input in statusBar(e.g. Find)
+        get: () => self.statusBar.querySelector('input') === null
+    });
     const _usage = document.getElementById('sk_usage');
     const _popup = document.getElementById('sk_popup');
     const _editor = document.getElementById('sk_editor');
     const _nvim = document.getElementById('sk_nvim');
     const _tabs = document.getElementById('sk_tabs');
     const _banner = document.getElementById('sk_banner');
+    _banner.noPointerEvents = true;
     const _bubble = document.getElementById('sk_bubble');
     const sk_bubble_content = _bubble.querySelector("div.sk_bubble_content");
     const sk_bubble_arrow = _bubble.querySelector('div.sk_arrow');
@@ -207,6 +196,7 @@ const Front = (function() {
         }
     };
     var keystroke = document.getElementById('sk_keystroke');
+    keystroke.noPointerEvents = true;
 
     self.startInputGuard = () => {
         if (getBrowserName().startsWith("Safari")) {
@@ -442,11 +432,7 @@ const Front = (function() {
         });
     };
     _actions['applyUserSettings'] = function (message) {
-        for (var k in message.userSettings) {
-            if (runtime.conf.hasOwnProperty(k)) {
-                runtime.conf[k] = message.userSettings[k];
-            }
-        }
+        runtime.applyConfDelta(message.userSettings);
         if ('theme' in message.userSettings) {
             setSanitizedContent(document.getElementById("sk_theme"), message.userSettings.theme);
         }
@@ -488,8 +474,6 @@ const Front = (function() {
             }}, self.topOrigin);
         });
     };
-
-    self.showUsage = self.hidePopup;
 
     function showPopup(content) {
         setSanitizedContent(_popup, content);

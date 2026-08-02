@@ -27,20 +27,6 @@ function request(url, onReady, headers, data, onException) {
     });
 }
 
-function dictFromArray(arry, val) {
-    var dict = {};
-    arry.forEach(function(h) {
-        dict[h] = val;
-    });
-    return dict;
-}
-
-function extendObject(target, ss) {
-    for (var k in ss) {
-        target[k] = ss[k];
-    }
-}
-
 function getSubSettings(set, keys) {
     var subset;
     if (!keys) {
@@ -82,6 +68,45 @@ function _save(storage, data, cb) {
     }
 }
 
+function loadRawSettingsFromStorage(keys, cb, defaultSet, options) {
+    var useSync = options && options.useSync;
+    var dropLocalPath = options && options.dropLocalPath;
+    var rawSet = defaultSet || {};
+    var serve = function() {
+        var subset = getSubSettings(rawSet, keys);
+        if (chrome.runtime.lastError) {
+            subset.error = "Settings sync may not work thoroughly because of: " + chrome.runtime.lastError.message;
+        }
+        cb(subset);
+    };
+    chrome.storage.local.get(null, function(localSet) {
+        if (!useSync) {
+            Object.assign(rawSet, localSet);
+            serve();
+            return;
+        }
+        var localSavedAt = localSet.savedAt || 0;
+        chrome.storage.sync.get(null, function(syncSet) {
+            var syncSavedAt = syncSet.savedAt || 0;
+            if (localSavedAt > syncSavedAt) {
+                Object.assign(rawSet, localSet);
+                _save(chrome.storage.sync, localSet, serve);
+            } else if (localSavedAt < syncSavedAt) {
+                if (dropLocalPath) {
+                    // don't sync local path
+                    delete syncSet.localPath;
+                }
+                Object.assign(rawSet, syncSet);
+                serve();
+                _save(chrome.storage.local, syncSet);
+            } else {
+                Object.assign(rawSet, localSet);
+                serve();
+            }
+        });
+    });
+}
+
 function start(browser) {
     var self = {};
 
@@ -104,8 +129,7 @@ function start(browser) {
         focusAfterClosed: "right",
         tabsMRUOrder: true,
         newTabPosition: 'default',
-        showTabIndices: false,
-        interceptedErrors: []
+        showTabIndices: false
     };
 
     var bookmarkFolders = [];
@@ -179,9 +203,7 @@ function start(browser) {
             if (keys) {
                 cb(getSubSettings(set, keys));
             } else {
-                var copy = {};
-                extendObject(copy, set);
-                cb(copy);
+                cb(Object.assign({}, set));
             }
         };
         if (_cachedSet) {
@@ -256,7 +278,9 @@ function start(browser) {
         }, tmpSet);
     }
 
-    loadSettings(null, browser._applyProxySettings);
+    if (browser._applyProxySettings) {
+        loadSettings(null, browser._applyProxySettings);
+    }
 
     function removeTab(tabId) {
         delete tabActivated[tabId];
@@ -330,11 +354,10 @@ function start(browser) {
         });
     });
 
-    chrome.tabs.onCreated.addListener(function(tab) {
-        _updateTabIndices();
-    });
-    chrome.tabs.onMoved.addListener(function() {
-        _updateTabIndices();
+    ['onCreated', 'onMoved', 'onDetached', 'onAttached'].forEach(function(evt) {
+        chrome.tabs[evt].addListener(function() {
+            _updateTabIndices();
+        });
     });
     chrome.tabs.onActivated.addListener(function(activeInfo) {
         if (!historyTabAction && activeInfo.tabId != tabHistory[tabHistory.length - 1]) {
@@ -352,12 +375,6 @@ function start(browser) {
         historyTabAction = false;
         chromelikeNewTabPosition = 0;
 
-        _updateTabIndices();
-    });
-    chrome.tabs.onDetached.addListener(function() {
-        _updateTabIndices();
-    });
-    chrome.tabs.onAttached.addListener(function() {
         _updateTabIndices();
     });
 
@@ -409,12 +426,7 @@ function start(browser) {
         }
     });
 
-    self.pendingPorts = [];
     function _response(message, sendResponse, result) {
-        var idx = self.pendingPorts.indexOf(message);
-        if (idx !== -1) {
-            self.pendingPorts.splice(idx, 1);
-        }
         sendResponse(result);
     }
     function handleMessage(_message, _sender, _sendResponse) {
@@ -424,10 +436,8 @@ function start(browser) {
                 if (result) {
                     _sendResponse(result);
                     _message.needResponse = false;
-                } else {
-                    self.pendingPorts.push(_message);
-                    // An asynchronous response will be sent using sendResponse later.
                 }
+                // else an asynchronous response will be sent using sendResponse later.
                 return _message.needResponse;
             }
         } else {
@@ -436,10 +446,7 @@ function start(browser) {
     }
     chrome.runtime.onMessage.addListener(handleMessage);
     if (isMV3) {
-        chrome.runtime.onUserScriptMessage.addListener((m, s, r) => {
-            m.fromUserScript = true;
-            handleMessage(m, s, r);
-        });
+        chrome.runtime.onUserScriptMessage.addListener(handleMessage);
         chrome.runtime.onInstalled.addListener((e) => {
             chrome.userScripts.configureWorld({
                 csp: 'script-src \'self\' \'unsafe-eval\'',
@@ -452,9 +459,8 @@ function start(browser) {
         diffSettings.savedAt = new Date().getTime();
         _save(chrome.storage.local, diffSettings, function() {
             _save(chrome.storage.sync, diffSettings, function() {
-                if (chrome.runtime.lastError) {
-                    var error = chrome.runtime.lastError.message;
-                }
+                // read lastError to suppress "Unchecked runtime.lastError"
+                void chrome.runtime.lastError;
             });
             if (afterSet) {
                 afterSet();
@@ -539,20 +545,6 @@ function start(browser) {
             });
         });
     };
-    self.toggleMouseQuery = function(message, sender, sendResponse) {
-        loadSettings('mouseSelectToQuery', function(data) {
-            if (sender.tab && sender.tab.url.indexOf(chrome.runtime.getURL("/")) !== 0) {
-                var mouseSelectToQuery = data.mouseSelectToQuery || [];
-                var idx = mouseSelectToQuery.indexOf(message.origin);
-                if (idx === -1) {
-                    mouseSelectToQuery.push(message.origin);
-                } else {
-                    mouseSelectToQuery.splice(idx, 1);
-                }
-                _updateAndPostSettings({mouseSelectToQuery: mouseSelectToQuery});
-            }
-        });
-    };
     self.getState = function(message, sender, sendResponse) {
         loadSettings(['blocklist', 'noPdfViewer', 'proxyMode', 'proxy'], function(data) {
             if (sender.tab) {
@@ -568,7 +560,7 @@ function start(browser) {
 
     self.addVIMark = function(message, sender, sendResponse) {
         loadSettings('marks', function(data) {
-            extendObject(data.marks, message.mark);
+            Object.assign(data.marks, message.mark);
             _updateAndPostSettings({marks: data.marks});
         });
     };
@@ -633,7 +625,7 @@ function start(browser) {
         chrome.storage.local.clear();
         chrome.storage.sync.clear();
         loadSettings(null, function(data) {
-            browser._applyProxySettings(data);
+            browser._applyProxySettings?.(data);
             _response(message, sendResponse, {
                 settings: data
             });
@@ -685,7 +677,7 @@ function start(browser) {
 
 
     function _getHistory(text, maxResults, cb, sortByMostUsed) {
-        browser.getLatestHistoryItem(text, maxResults, (items) => {
+        browser.getLatestHistoryItem?.(text, maxResults, (items) => {
             if (sortByMostUsed) {
                 items = items.sort(function(a, b) {
                     return b.visitCount - a.visitCount;
@@ -986,8 +978,8 @@ function start(browser) {
         });
     };
     self.openLast = function(message, sender, sendResponse) {
-        if (browser.name === "Safari") {
-            chrome.runtime.sendNativeMessage("application.id", {command: "reopenLastTab"}, function(response) {
+        if (browser.restoreLastTab) {
+            browser.restoreLastTab(function(response) {
                 _response(message, sendResponse, response);
             });
         } else {
@@ -1717,7 +1709,7 @@ function start(browser) {
                     }
                 }
                 if (message.host) {
-                    var hostsDict = dictFromArray(proxyConf.autoproxy_hosts[message.number], 1);
+                    var hostsDict = Object.fromEntries(proxyConf.autoproxy_hosts[message.number].map((h) => [h, 1]));
                     var hosts = message.host.split(/\s*[ ,\n]\s*/);
                     if (message.operation === "toggle") {
                         hosts.forEach(function(host) {
@@ -1745,7 +1737,7 @@ function start(browser) {
                 proxy: proxyConf.proxy
             };
             _updateAndPostSettings(diffSet);
-            browser._applyProxySettings(proxyConf);
+            browser._applyProxySettings?.(proxyConf);
             cb && cb(diffSet);
         });
     }
@@ -1933,17 +1925,6 @@ function start(browser) {
         chrome.windows.create({"url": message.url, "incognito": true});
     };
 
-    var userAgent;
-    function onBeforeSendHeaders(details) {
-        for (var i = 0; i < details.requestHeaders.length; ++i) {
-            if (details.requestHeaders[i].name === 'User-Agent') {
-                details.requestHeaders[i].value = userAgent;
-                break;
-            }
-        }
-        return {requestHeaders: details.requestHeaders};
-    }
-
     self.writeClipboard = function (message, sender, sendResponse) {
         navigator.clipboard.writeText(message.text)
     };
@@ -1962,8 +1943,8 @@ function start(browser) {
     }
     let clientInLLMRequest = {tabId: 0, frameId: 0, origin: ""};
     const sendLLMessage = (message) => {
-        if (browser.name === "Safari" && chrome.runtime.getURL("/").toLowerCase().indexOf(clientInLLMRequest.origin) === 0) {
-              chrome.runtime.sendMessage(message);
+        if (browser.sendLLMessage && chrome.runtime.getURL("/").toLowerCase().indexOf(clientInLLMRequest.origin) === 0) {
+            browser.sendLLMessage(message);
         } else {
             sendTabMessage(clientInLLMRequest.tabId, clientInLLMRequest.frameId, message);
         }
@@ -1973,8 +1954,6 @@ function start(browser) {
         clientInLLMRequest.tabId = sender.tab.id;
         clientInLLMRequest.frameId = sender.frameId;
         clientInLLMRequest.origin = sender.origin.toLowerCase();
-
-        const decoder = new TextDecoder();
 
         const provider = message.provider;
         if (llmClients.hasOwnProperty(provider)) {
@@ -2012,7 +1991,6 @@ function start(browser) {
         });
     };
 
-    self.getContainerName = browser._getContainerName(self, _response);
     self.getContainers = browser._getContainers ? browser._getContainers(self, _response) : function(message, sender, sendResponse) {
         _response(message, sendResponse, { containers: [] });
     };
@@ -2037,9 +2015,6 @@ function start(browser) {
 }
 
 export {
-    _save,
-    dictFromArray,
-    extendObject,
-    getSubSettings,
+    loadRawSettingsFromStorage,
     start
 };

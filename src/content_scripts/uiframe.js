@@ -1,11 +1,10 @@
 import { LOG } from '../common/utils.js';
 import { runtime } from './common/runtime.js';
 import {
-    getBrowserName,
     getDocumentOrigin
 } from './common/utils.js';
 
-function createUiHost(browser, onload) {
+function createUiHost(onload) {
     var uiHost = document.createElement("div");
     uiHost.style.display = "block";
     uiHost.style.opacity = 1;
@@ -35,8 +34,9 @@ function createUiHost(browser, onload) {
         if (_message.toFrontend) {
             // forward message to frontend
             ifr.contentWindow.postMessage({surfingkeys_frontend_data: _message}, frontEndURL);
-            if (_message.toFrontend && event.source
-                && ['showStatus', 'showEditor', 'openOmnibar', 'openFinder', 'chooseTab'].indexOf(_message.action) !== -1) {
+            // commands flagged with activateContent take over the input focus,
+            // so their sender becomes the active content window
+            if (_message.activateContent && event.source) {
                 if (!activeContent || activeContent.window !== event.source) {
                     // reset active Content
 
@@ -99,22 +99,15 @@ function createUiHost(browser, onload) {
             ifr.blur();
             // test with https://docs.google.com/ and https://web.whatsapp.com/
             if (lastStateOfPointerEvents !== response.pointerEvents && activeContent) {
-                if (browser.getBackFocusFromFrontend) {
-                    browser.getBackFocusFromFrontend();
-                } else {
-                    activeContent.window.postMessage({surfingkeys_content_data: {
-                        action: 'getBackFocus'
-                    }}, activeContent.origin);
-                }
+                activeContent.window.postMessage({surfingkeys_content_data: {
+                    action: 'getBackFocus'
+                }}, activeContent.origin);
             }
             if (document.body) {
                 document.body.style.animationFillMode = "";
                 document.body.style.overflowY = _origOverflowY;
             }
         } else {
-            if (browser.focusFrontend) {
-                browser.focusFrontend(ifr);
-            }
             if (document.body) {
                 document.body.style.animationFillMode = "none";
                 if (_origOverflowY === undefined) {

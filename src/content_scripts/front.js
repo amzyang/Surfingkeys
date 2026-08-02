@@ -7,7 +7,6 @@ import {
     getBrowserName,
     getDocumentOrigin,
     getElements,
-    httpRequest,
     initSKFunctionListener,
     isEditable,
     isInUIFrame,
@@ -34,7 +33,7 @@ function createFront(insert, normal, hints, visual, browser) {
 
     function newFrontEnd() {
         frontendPromise = new Promise(function (resolve, reject) {
-            createUiHost(browser, (res) => {
+            createUiHost((res) => {
                 resolve(res);
                 applyUserSettings();
             });
@@ -332,6 +331,7 @@ function createFront(insert, normal, hints, visual, browser) {
         onEditorSaved = onWrite || updateElementBehindEditor;
         const cmd = {
             action: 'showEditor',
+            activateContent: true,
             type: type || "textarea",
             initial_line: initial_line,
             content: content
@@ -347,7 +347,8 @@ function createFront(insert, normal, hints, visual, browser) {
             RUNTIME('focusTabByIndex');
         } else {
             self.command({
-                action: 'chooseTab'
+                action: 'chooseTab',
+                activateContent: true
             });
         }
     };
@@ -392,6 +393,7 @@ function createFront(insert, normal, hints, visual, browser) {
     var _userURLsHasCustomOnEnter = false;
     self.openOmnibar = function(args) {
         args.action = 'openOmnibar';
+        args.activateContent = true;
         _userURLsHasCustomOnEnter = false;
         if (args.type === "LLMChat") {
             args.extra = args.extra || {};
@@ -489,17 +491,32 @@ function createFront(insert, normal, hints, visual, browser) {
         key: ""
     };
 
+    let _lastStatus;
     self.showStatus = function (msgs, duration) {
-        // when showModeStatus is on, showStatus will cause uiHost injected too early
-        // which could break some host scripts from sites in Firefox.
-        const waitForHostScripts = (getBrowserName() === "Firefox") ? 1000 : 0;
-        setTimeout(() => {
-            self.command({
-                action: "showStatus",
-                contents: msgs,
-                duration: duration
-            });
-        }, waitForHostScripts);
+        // dedup persistent status updates as long as this frame stays the
+        // active content; transient ones(with duration) must always re-show
+        if (duration === undefined) {
+            const status = JSON.stringify(msgs);
+            if (status === _lastStatus) {
+                return;
+            }
+            _lastStatus = status;
+        } else {
+            _lastStatus = undefined;
+        }
+        const send = () => self.command({
+            action: "showStatus",
+            activateContent: true,
+            contents: msgs,
+            duration: duration
+        });
+        if (getBrowserName() === "Firefox") {
+            // when showModeStatus is on, showStatus will cause uiHost injected too early
+            // which could break some host scripts from sites in Firefox.
+            setTimeout(send, 1000);
+        } else {
+            send();
+        }
     };
     self.toggleStatus = function (visible) {
         self.command({
@@ -538,12 +555,7 @@ function createFront(insert, normal, hints, visual, browser) {
             });
             const cloneUS = JSON.parse(JSON.stringify(us));
             // overrides local settings from snippets
-            for (var k in cloneUS) {
-                if (runtime.conf.hasOwnProperty(k)) {
-                    runtime.conf[k] = cloneUS[k];
-                    delete cloneUS[k];
-                }
-           }
+            runtime.applyConfDelta(cloneUS, true);
             if (runtime.conf.enableEmojiInsertion) {
                 insert.enableEmojiInsertion();
             }
@@ -590,7 +602,8 @@ function createFront(insert, normal, hints, visual, browser) {
         hidePopup,
         openFinder: () => {
             self.command({
-                action: "openFinder"
+                action: "openFinder",
+                activateContent: true
             });
         },
         showBanner: (msg, linger_time) => {
@@ -760,10 +773,14 @@ function createFront(insert, normal, hints, visual, browser) {
     var _active = window === top;
     _actions['deactivated'] = function(message) {
         _active = false;
+        // another content window owns the status bar now, our cached status
+        // no longer reflects what is on screen
+        _lastStatus = undefined;
     };
 
     _actions['activated'] = function(message) {
         _active = true;
+        _lastStatus = undefined;
     };
 
     runtime.on('focusFrame', function(msg, sender, response) {
@@ -803,6 +820,7 @@ function createFront(insert, normal, hints, visual, browser) {
             _showQueryResult(_message.pos, _message.result);
         } else if (_message.action === "frontendDestroyed") {
             frontendPromise = undefined;
+            _lastStatus = undefined;
         } else if (_active) {
             if (_callbacks[_message.id]) {
                 var f = _callbacks[_message.id];

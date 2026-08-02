@@ -136,35 +136,21 @@ function createOmnibar(front, clipboard) {
         }
     });
 
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Ctrl-.>"), {
-        annotation: "Show results of next page",
-        feature_group: 8,
-        code: function () {
-            if (_items) {
-                if (_start * runtime.conf.omnibarMaxResults < _items.length) {
-                    _start ++;
-                } else {
-                    _start = 1;
+    const addPageMapping = (keystroke, annotation, delta) => {
+        self.mappings.add(KeyboardUtils.encodeKeystroke(keystroke), {
+            annotation,
+            feature_group: 8,
+            code: function () {
+                if (_items && _items.length) {
+                    const pages = Math.ceil(_items.length / runtime.conf.omnibarMaxResults);
+                    _start = ((_start - 1 + delta + pages) % pages) + 1;
+                    _listResultPage();
                 }
-                _listResultPage();
             }
-        }
-    });
-
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Ctrl-,>"), {
-        annotation: "Show results of previous page",
-        feature_group: 8,
-        code: function () {
-            if (_items) {
-                if (_start > 1) {
-                    _start --;
-                } else {
-                    _start = Math.ceil(_items.length / runtime.conf.omnibarMaxResults);
-                }
-                _listResultPage();
-            }
-        }
-    });
+        });
+    };
+    addPageMapping("<Ctrl-.>", "Show results of next page", 1);
+    addPageMapping("<Ctrl-,>", "Show results of previous page", -1);
 
     self.mappings.add(KeyboardUtils.encodeKeystroke("<Ctrl-c>"), {
         annotation: "Copy selected item url or all listed item urls",
@@ -373,42 +359,26 @@ function createOmnibar(front, clipboard) {
         return _input;
     }
 
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Tab>"), {
-        annotation: "Forward cycle through the candidates.",
-        feature_group: 8,
-        code: function () {
-            rotateResult(getPosition() === "bottom");
-        }
-    });
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Shift-Tab>"), {
-        annotation: "Backward cycle through the candidates.",
-        feature_group: 8,
-        code: function () {
-            rotateResult(getPosition() !== "bottom");
-        }
-    });
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Ctrl-n>"), {
-        annotation: "Forward cycle through the input history.",
-        feature_group: 8,
-        code: function () {
-            if (handler && handler.rotateInput) {
-                handler.rotateInput(getPosition() === "bottom");
-            } else {
-                rotateResult(getPosition() === "bottom");
+    // when omnibar sits at bottom, the list grows upwards, which flips the
+    // visual direction of rotation
+    const addRotateMapping = (keystroke, annotation, forward, rotateInputFirst) => {
+        self.mappings.add(KeyboardUtils.encodeKeystroke(keystroke), {
+            annotation,
+            feature_group: 8,
+            code: function () {
+                const direction = forward === (getPosition() === "bottom");
+                if (rotateInputFirst && handler && handler.rotateInput) {
+                    handler.rotateInput(direction);
+                } else {
+                    rotateResult(direction);
+                }
             }
-        }
-    });
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Ctrl-p>"), {
-        annotation: "Backward cycle through the input history.",
-        feature_group: 8,
-        code: function () {
-            if (handler && handler.rotateInput) {
-                handler.rotateInput(getPosition() !== "bottom");
-            } else {
-                rotateResult(getPosition() !== "bottom");
-            }
-        }
-    });
+        });
+    };
+    addRotateMapping("<Tab>", "Forward cycle through the candidates.", true, false);
+    addRotateMapping("<Shift-Tab>", "Backward cycle through the candidates.", false, false);
+    addRotateMapping("<Ctrl-n>", "Forward cycle through the input history.", true, true);
+    addRotateMapping("<Ctrl-p>", "Backward cycle through the input history.", false, true);
     self.mappings.add(KeyboardUtils.encodeKeystroke("<Ctrl-'>"), {
         annotation: "Toggle quotes in an input element",
         feature_group: 8,
@@ -486,10 +456,6 @@ function createOmnibar(front, clipboard) {
     };
 
     var _start, _items, _showFolder, _page;
-
-    self.getPageSize = () => {
-        return runtime.conf.omnibarMaxResults;
-    };
 
     self.getHistoryCacheSize = () => {
         return runtime.conf.omnibarHistoryCacheSize;
@@ -614,7 +580,7 @@ function createOmnibar(front, clipboard) {
     }
 
     self.openFocused = function() {
-        var ret = false, fi = self.resultsDiv.querySelector('li.focused');
+        var fi = self.resultsDiv.querySelector('li.focused');
         var url;
         if (fi) {
             url = fi.url;
@@ -751,20 +717,13 @@ function createOmnibar(front, clipboard) {
             });
         });
     }));
-    self.addHandler('RecentlyClosed', OpenURLs(`Recently closed${separatorHtml}`, self, () => {
-        return new Promise((resolve, reject) => {
-            RUNTIME('getRecentlyClosed', null, function(response) {
-                resolve(filterByTitleOrUrl(response.urls, self.input.value, runtime.getCaseSensitive(self.input.value)));
-            });
+    const filteredURLSource = (action) => () => new Promise((resolve) => {
+        RUNTIME(action, null, function(response) {
+            resolve(filterByTitleOrUrl(response.urls, self.input.value, runtime.getCaseSensitive(self.input.value)));
         });
-    }));
-    self.addHandler('TabURLs', OpenURLs(`Tab History${separatorHtml}`, self, () => {
-        return new Promise((resolve, reject) => {
-            RUNTIME('getTabURLs', null, function(response) {
-                resolve(filterByTitleOrUrl(response.urls, self.input.value, runtime.getCaseSensitive(self.input.value)));
-            });
-        });
-    }));
+    });
+    self.addHandler('RecentlyClosed', OpenURLs(`Recently closed${separatorHtml}`, self, filteredURLSource('getRecentlyClosed')));
+    self.addHandler('TabURLs', OpenURLs(`Tab History${separatorHtml}`, self, filteredURLSource('getTabURLs')));
     self.addHandler('Tabs', OpenTabs(self));
     self.addHandler('CloseTabs', CloseTabs(self));
     self.addHandler('Windows', OpenWindows(self, front));
@@ -939,7 +898,7 @@ function AddBookmark(omnibar) {
     var self = {
         focusFirstCandidate: true,
         prompt: `add bookmark${separatorHtml}`
-    }, folders, origFFC;
+    }, folders;
 
     self.onOpen = function(arg) {
         self.page = arg;
@@ -1429,8 +1388,6 @@ function Commands(omnibar, front) {
         prompt: ':',
     }, items = {};
 
-    var historyInc = 0;
-
     self.onOpen = function() {
         omnibar.resultsDiv.className = "commands";
 
@@ -1439,7 +1396,6 @@ function Commands(omnibar, front) {
             return;
         }
 
-        historyInc = -1;
         RUNTIME('getSettings', {
             key: 'cmdHistory'
         }, function(response) {

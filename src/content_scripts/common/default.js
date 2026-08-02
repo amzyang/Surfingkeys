@@ -1,7 +1,6 @@
 import { RUNTIME, dispatchSKEvent, runtime } from './runtime.js';
 import KeyboardUtils from './keyboardUtils';
 import {
-    actionWithSelectionPreserved,
     createElementWithContent,
     getBrowserName,
     getCssSelectorsOfEditable,
@@ -392,21 +391,6 @@ export default function(api, clipboard, insert, normal, hints, visual, front, br
             dispatchSKEvent("front", ['showBubble', pos, queryResult, true]);
         });
     });
-
-    function getSentence(textNode, offset) {
-        var sentence = "";
-
-        actionWithSelectionPreserved(function(sel) {
-            sel.setPosition(textNode, offset);
-            sel.modify("extend", "backward", "sentence");
-            sel.collapseToStart();
-            sel.modify("extend", "forward", "sentence");
-
-            sentence = sel.toString();
-        });
-
-        return sentence.replace(/\n/g, '');
-    }
 
     mapkey("cq", '#7Query word with Hints', function() {
         hints.create(runtime.conf.textAnchorPat, function (element) {
@@ -906,38 +890,20 @@ export default function(api, clipboard, insert, normal, hints, visual, front, br
             readText(window.getSelection().toString(), {verbose: true});
         });
 
-        mapkey('on', '#3Open newtab', function() {
-            tabOpenLink("chrome://newtab/");
-        });
-        mapkey('ga', '#12Open Chrome About', function() {
-            tabOpenLink("chrome://help/");
-        });
-        mapkey('gb', '#12Open Chrome Bookmarks', function() {
-            tabOpenLink("chrome://bookmarks/");
-        });
-        mapkey('gc', '#12Open Chrome Cache', function() {
-            tabOpenLink("chrome://cache/");
-        });
-        mapkey('gd', '#12Open Chrome Downloads', function() {
-            tabOpenLink("chrome://downloads/");
-        });
-        mapkey('gh', '#12Open Chrome History', function() {
-            tabOpenLink("chrome://history/");
-        });
-        mapkey('gk', '#12Open Chrome Cookies', function() {
-            tabOpenLink("chrome://settings/cookies");
-        });
-        mapkey('ge', '#12Open Chrome Extensions', function() {
-            tabOpenLink("chrome://extensions/");
-        });
-        mapkey('gn', '#12Open Chrome net-internals', function() {
-            tabOpenLink("chrome://net-internals/#proxy");
-        });
-        mapkey(';i', '#12Open Chrome Inspect', function() {
-            tabOpenLink("chrome://inspect/#devices");
-        });
-        mapkey(';v', '#11Open neovim', function() {
-            tabOpenLink("/pages/neovim.html");
+        [
+            ['on', '#3Open newtab', "chrome://newtab/"],
+            ['ga', '#12Open Chrome About', "chrome://help/"],
+            ['gb', '#12Open Chrome Bookmarks', "chrome://bookmarks/"],
+            ['gc', '#12Open Chrome Cache', "chrome://cache/"],
+            ['gd', '#12Open Chrome Downloads', "chrome://downloads/"],
+            ['gh', '#12Open Chrome History', "chrome://history/"],
+            ['gk', '#12Open Chrome Cookies', "chrome://settings/cookies"],
+            ['ge', '#12Open Chrome Extensions', "chrome://extensions/"],
+            ['gn', '#12Open Chrome net-internals', "chrome://net-internals/#proxy"],
+            [';i', '#12Open Chrome Inspect', "chrome://inspect/#devices"],
+            [';v', '#11Open neovim', "/pages/neovim.html"],
+        ].forEach(([keys, annotation, url]) => {
+            mapkey(keys, annotation, () => tabOpenLink(url));
         });
     }
 

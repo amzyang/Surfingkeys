@@ -3,13 +3,9 @@ import { runtime } from './runtime.js';
 import Mode from './mode';
 import KeyboardUtils from './keyboardUtils';
 import {
-    createElementWithContent,
     getRealEdit,
     isEditable,
     llmRequest,
-    locateFocusNode,
-    scrollIntoViewIfNeeded,
-    setSanitizedContent,
 } from './utils.js';
 import CursorPrompt from './cursorPrompt';
 
@@ -56,6 +52,19 @@ function createInsert() {
         selection.addRange(range);//make the range you have just created the visible selection
     }
 
+    // run nativeFn on a native input, contentEditableFn(with current selection)
+    // on a contenteditable div
+    function withEditElement(nativeFn, contentEditableFn) {
+        return function() {
+            var element = getRealEdit();
+            if (element.setSelectionRange !== undefined) {
+                nativeFn(element);
+            } else {
+                contentEditableFn(document.getSelection());
+            }
+        };
+    }
+
     self.mappings = new Trie();
     self.map_node = self.mappings;
     self.mappings.add(KeyboardUtils.encodeKeystroke("<Ctrl-e>"), {
@@ -67,99 +76,59 @@ function createInsert() {
     self.mappings.add(KeyboardUtils.encodeKeystroke(keyToBOL), {
         annotation: "Move the cursor to the beginning of the line",
         feature_group: 15,
-        code: function() {
-            var element = getRealEdit();
-            if (element.setSelectionRange !== undefined) {
-                element.setSelectionRange(0, 0);
-            } else {
-                // for contenteditable div
-                var selection = document.getSelection();
-                selection.setPosition(selection.focusNode, 0);
-            }
-        }
+        code: withEditElement(function(element) {
+            element.setSelectionRange(0, 0);
+        }, function(selection) {
+            selection.setPosition(selection.focusNode, 0);
+        })
     });
     self.mappings.add(KeyboardUtils.encodeKeystroke("<Ctrl-u>"), {
         annotation: "Delete all entered characters before the cursor",
         feature_group: 15,
-        code: function() {
-            var element = getRealEdit();
-            if (element.setSelectionRange !== undefined) {
-                element.value = element.value.substr(element.selectionStart);
-                element.setSelectionRange(0, 0);
-            } else {
-                // for contenteditable div
-                var selection = document.getSelection();
-                selection.focusNode.data = selection.focusNode.data.substr(selection.focusOffset);
-            }
-        }
+        code: withEditElement(function(element) {
+            element.value = element.value.substr(element.selectionStart);
+            element.setSelectionRange(0, 0);
+        }, function(selection) {
+            selection.focusNode.data = selection.focusNode.data.substr(selection.focusOffset);
+        })
     });
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Alt-b>"), {
-        annotation: "Move the cursor Backward 1 word",
-        feature_group: 15,
-        code: function() {
-            var element = getRealEdit();
-            if (element.setSelectionRange !== undefined) {
-                var pos = nextNonWord(element.value, -1, element.selectionStart);
+    [
+        ["<Alt-b>", "Move the cursor Backward 1 word", -1, "backward"],
+        ["<Alt-f>", "Move the cursor Forward 1 word", 1, "forward"],
+    ].forEach(([keystroke, annotation, step, dir]) => {
+        self.mappings.add(KeyboardUtils.encodeKeystroke(keystroke), {
+            annotation,
+            feature_group: 15,
+            code: withEditElement(function(element) {
+                var pos = nextNonWord(element.value, step, element.selectionStart);
                 element.setSelectionRange(pos, pos);
-            } else {
-                // for contenteditable div
-                document.getSelection().modify("move", "backward", "word");
-            }
-        }
+            }, function(selection) {
+                selection.modify("move", dir, "word");
+            })
+        });
     });
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Alt-f>"), {
-        annotation: "Move the cursor Forward 1 word",
-        feature_group: 15,
-        code: function() {
-            var element = getRealEdit();
-            if (element.setSelectionRange !== undefined) {
-                var pos = nextNonWord(element.value, 1, element.selectionStart);
-                element.setSelectionRange(pos, pos);
-            } else {
-                // for contenteditable div
-                document.getSelection().modify("move", "forward", "word");
-            }
-        }
-    });
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Alt-w>"), {
-        annotation: "Delete a word backwards",
-        feature_group: 15,
-        code: function() {
-            var element = getRealEdit();
-            if (element.setSelectionRange !== undefined) {
-                var pos = deleteNextWord(element.value, -1, element.selectionStart);
+    [
+        ["<Alt-w>", "Delete a word backwards", -1, "backward"],
+        ["<Alt-d>", "Delete a word forwards", 1, "forward"],
+    ].forEach(([keystroke, annotation, step, dir]) => {
+        self.mappings.add(KeyboardUtils.encodeKeystroke(keystroke), {
+            annotation,
+            feature_group: 15,
+            code: withEditElement(function(element) {
+                var pos = deleteNextWord(element.value, step, element.selectionStart);
                 element.value = pos[0];
                 element.setSelectionRange(pos[1], pos[1]);
-            } else {
-                // for contenteditable div
-                var selection = document.getSelection();
+            }, function(selection) {
                 var p0 = selection.focusOffset;
-                document.getSelection().modify("move", "backward", "word");
+                selection.modify("move", dir, "word");
                 var v = selection.focusNode.data, p1 = selection.focusOffset;
-                selection.focusNode.data = v.substr(0, p1) + v.substr(p0);
-                selection.setPosition(selection.focusNode, p1);
-            }
-        }
-    });
-    self.mappings.add(KeyboardUtils.encodeKeystroke("<Alt-d>"), {
-        annotation: "Delete a word forwards",
-        feature_group: 15,
-        code: function() {
-            var element = getRealEdit();
-            if (element.setSelectionRange !== undefined) {
-                var pos = deleteNextWord(element.value, 1, element.selectionStart);
-                element.value = pos[0];
-                element.setSelectionRange(pos[1], pos[1]);
-            } else {
-                // for contenteditable div
-                var selection = document.getSelection();
-                var p0 = selection.focusOffset;
-                document.getSelection().modify("move", "forward", "word");
-                var v = selection.focusNode.data, p1 = selection.focusOffset;
-                selection.focusNode.data = v.substr(0, p0) + v.substr(p1);
-                selection.setPosition(selection.focusNode, p0);
-            }
-        }
+                // keep text outside the [caret, moved caret) range, caret lands
+                // at the start of the removed range
+                var start = step < 0 ? p1 : p0, end = step < 0 ? p0 : p1;
+                selection.focusNode.data = v.substr(0, start) + v.substr(end);
+                selection.setPosition(selection.focusNode, start);
+            })
+        });
     });
     self.mappings.add(KeyboardUtils.encodeKeystroke("<Esc>"), {
         annotation: "Exit insert mode",

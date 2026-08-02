@@ -10,9 +10,21 @@ import KeyboardUtils from './keyboardUtils';
 var mode_stack = [];
 
 const Mode = function(name, statusLine) {
+    const self = this;
     this.name = name;
     this.statusLine = statusLine;
     this.eventListeners = {};
+    // closure-captured self so that the function keeps working when detached,
+    // e.g. exposed as api.Normal.feedkeys
+    this.feedkeys = function(keys) {
+        setTimeout(function() {
+            var evt = new Event("keydown");
+            for (var i = 0; i < keys.length; i ++) {
+                evt.sk_keyName = keys[i];
+                Mode.handleMapKey.call(self, evt);
+            }
+        }, 1);
+    };
     this.addEventListener = function(evtName, handler) {
         this.eventListeners[evtName] = handler;
 
@@ -43,16 +55,11 @@ const Mode = function(name, statusLine) {
                 var modeList = mode_stack.map(function(u) { return u.name; }).join(',');
                 reportIssue("Mode {0} pushed into mode stack again.".format(this.name), "Modes in stack: {0}".format(modeList));
             }
-            // stackTrace();
         }
 
         mode_stack.sort(function(a,b) {
             return (a.priority < b.priority) ? 1 : ((b.priority < a.priority) ? -1 : 0);
         } );
-        // var modes = mode_stack.map(function(m) {
-        // return m.name;
-        // }).join('->');
-        // console.log('enter {0}, {1}'.format(this.name, modes));
 
         this.onEnter && this.onEnter();
 
@@ -70,14 +77,8 @@ const Mode = function(name, statusLine) {
             } else {
                 // otherwise, we just pop all modes above this inclusively.
                 pos++;
-                var popup = mode_stack.slice(0, pos);
                 mode_stack = mode_stack.slice(pos);
             }
-
-            // var modes = mode_stack.map(function(m) {
-            // return m.name;
-            // }).join('->');
-            // console.log('exit {0}, {1}'.format(this.name, modes));
         }
         Mode.showStatus();
         this.onExit && this.onExit(pos);
@@ -295,7 +296,7 @@ Mode.handleMapKey = function(event, onNoMatched) {
         this.map_node === this.mappings &&
         runtime.conf.digitForRepeat &&
         (key >= "1" || (this.repeats !== "" && key >= "0")) && key <= "9" &&
-        this.map_node.getWords().length > 0
+        this.map_node.hasMappings()
     ) {
         // reset only after target action executed or cancelled
         this.repeats += key;

@@ -13,9 +13,7 @@ import {
     getVisibleElements,
     getWordUnderCursor,
     locateFocusNode,
-    scrollIntoViewIfNeeded,
     setSanitizedContent,
-    tabOpenLink,
 } from './utils.js';
 
 function createVisual(clipboard, hints) {
@@ -120,72 +118,30 @@ function createVisual(clipboard, hints) {
     self.mappings = new Trie();
     self.map_node = self.mappings;
     self.repeats = "";
-    self.mappings.add("l", {
-        annotation: "forward character",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("h", {
-        annotation: "backward character",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("j", {
-        annotation: "forward line",
-        feature_group: 9,
-        repeatNoThrottling: true,
-        code: modifySelection
-    });
-    self.mappings.add("k", {
-        annotation: "backward line",
-        feature_group: 9,
-        repeatNoThrottling: true,
-        code: modifySelection
-    });
-    self.mappings.add("w", {
-        annotation: "forward word",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("e", {
-        annotation: "forward word",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("b", {
-        annotation: "backward word",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add(")", {
-        annotation: "forward sentence",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("(", {
-        annotation: "backward sentence",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("}", {
-        annotation: "forward paragraphboundary",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("{", {
-        annotation: "backward paragraphboundary",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("0", {
-        annotation: "backward lineboundary",
-        feature_group: 9,
-        code: modifySelection
-    });
-    self.mappings.add("$", {
-        annotation: "forward lineboundary",
-        feature_group: 9,
-        code: modifySelection
+    [
+        ["l", "forward character"],
+        ["h", "backward character"],
+        ["j", "forward line", true],
+        ["k", "backward line", true],
+        ["w", "forward word"],
+        ["e", "forward word"],
+        ["b", "backward word"],
+        [")", "forward sentence"],
+        ["(", "backward sentence"],
+        ["}", "forward paragraphboundary"],
+        ["{", "backward paragraphboundary"],
+        ["0", "backward lineboundary"],
+        ["$", "forward lineboundary"],
+    ].forEach(([key, annotation, repeatNoThrottling]) => {
+        const meta = {
+            annotation,
+            feature_group: 9,
+            code: modifySelection
+        };
+        if (repeatNoThrottling) {
+            meta.repeatNoThrottling = true;
+        }
+        self.mappings.add(key, meta);
     });
     self.mappings.add("G", {
         annotation: "forward documentboundary",
@@ -677,16 +633,6 @@ function createVisual(clipboard, hints) {
             highlight(new RegExp(runtime.conf.lastQuery, runtime.getCaseSensitive(runtime.conf.lastQuery) ? "" : "i"));
             self.visualEnter(runtime.conf.lastQuery);
         }
-    };
-
-    self.feedkeys = function(keys) {
-        setTimeout(function() {
-            var evt = new Event("keydown");
-            for (var i = 0; i < keys.length; i ++) {
-                evt.sk_keyName = keys[i];
-                Mode.handleMapKey.call(self, evt);
-            }
-        }, 1);
     };
 
     function findNextTextNodeBy(query, caseSensitive, backwards) {

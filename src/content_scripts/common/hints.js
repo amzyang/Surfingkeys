@@ -450,14 +450,28 @@ div.hint-scrollable {
             key !== key.toLowerCase(); // in case key is a symbol or special character
     }
 
+    // cumulative z-index per node, shared by all hints of one creation so that
+    // common ancestors are resolved(getComputedStyle) only once
+    var _zIndexCache = new WeakMap();
     function getZIndex(node) {
-        var z = 0;
+        var total = 0, path = [], own = [];
         do {
+            if (_zIndexCache.has(node)) {
+                total += _zIndexCache.get(node);
+                break;
+            }
             var i = parseInt(getComputedStyle(node).getPropertyValue('z-index'));
-            z += (isNaN(i) || i < 0) ? 0 : i;
+            i = (isNaN(i) || i < 0) ? 0 : i;
+            path.push(node);
+            own.push(i);
+            total += i;
             node = node.parentNode;
         } while (node && node !== document.body && node !== document && node.nodeType !== node.DOCUMENT_FRAGMENT_NODE);
-        return z;
+        for (var k = 0, below = 0; k < path.length; k++) {
+            _zIndexCache.set(path[k], total - below);
+            below += own[k];
+        }
+        return total;
     }
 
     function handleHint(evt) {
@@ -787,25 +801,36 @@ div.hint-scrollable {
         links.forEach(function(link) {
             holder.appendChild(link);
         });
+        // batch all layout reads first, then write styles, so pushing
+        // overlapped hints down does not force one reflow per hint
         var hints = holder.querySelectorAll('div');
-        var bcr = getRealRect(hints[0]);
+        var metrics = Array.from(hints).map(function(h) {
+            var r = getRealRect(h);
+            return {top: r.top, left: r.left, width: r.width, height: r.height,
+                    offsetTop: h.offsetTop, offsetHeight: h.offsetHeight};
+        });
         for (var i = 1; i < hints.length; i++) {
-            var h = hints[i];
-            var tcr = getRealRect(h);
-            if (tcr.top === bcr.top && Math.abs(tcr.left - bcr.left) < bcr.width) {
-                h.style.top = h.offsetTop + h.offsetHeight + "px";
+            var cur = metrics[i], prev = metrics[i - 1];
+            if (cur.top === prev.top && Math.abs(cur.left - prev.left) < prev.width) {
+                hints[i].style.top = cur.offsetTop + cur.offsetHeight + "px";
+                cur.top += cur.height;
             }
-            bcr = getRealRect(h);
         }
         hintsHost.shadowRoot.appendChild(holder);
     }
 
-    function createHintsForElements(elements, attrs) {
+    function applyHintAttrs(attrs, defaultStatusLine) {
+        // styles may have changed since last creation, drop cached z-indices
+        _zIndexCache = new WeakMap();
         attrs = attrs || {};
         for (var attr in attrs) {
             behaviours[attr] = attrs[attr];
         }
-        self.statusLine = (attrs && attrs.statusLine) || "Hints to click";
+        self.statusLine = attrs.statusLine || defaultStatusLine;
+    }
+
+    function createHintsForElements(elements, attrs) {
+        applyHintAttrs(attrs, "Hints to click");
 
         elements = filterInvisibleElements(elements);
         if (elements.length > 0) {
@@ -815,12 +840,8 @@ div.hint-scrollable {
     }
 
     function createHintsForClick(cssSelector, attrs) {
-        attrs = attrs || {};
-        self.statusLine = attrs.statusLine || "Hints to click";
+        applyHintAttrs(attrs, "Hints to click");
 
-        for (var attr in attrs) {
-            behaviours[attr] = attrs[attr];
-        }
         let elements;
         if (cssSelector === "") {
             elements = getVisibleElements(function(e, v) {
@@ -849,10 +870,7 @@ div.hint-scrollable {
     }
 
     function createHintsForTextNode(rxp, attrs) {
-        for (var attr in attrs) {
-            behaviours[attr] = attrs[attr];
-        }
-        self.statusLine = (attrs && attrs.statusLine) || "Hints to select text";
+        applyHintAttrs(attrs, "Hints to select text");
 
         var elements = getVisibleElements(function(e, v) {
             var aa = e.childNodes;
@@ -950,6 +968,7 @@ div.hint-scrollable {
     }
 
     self.createInputLayer = function() {
+        _zIndexCache = new WeakMap();
         placeHintsHost(hintsHost);
         const cssSelector = getCssSelectorsOfEditable();
 
