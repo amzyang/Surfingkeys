@@ -61,7 +61,7 @@ KeyboardUtils.getKeyChar = function(event) {
         character = "";
     } else {
         if (this.keyNames.hasOwnProperty(event.keyCode)) {
-            character = "{0}".format(this.keyNames[event.keyCode]);
+            character = this.keyNames[event.keyCode];
         } else {
             character = event.key || "";
             if (["Shift", "Meta", "Alt", "Ctrl"].indexOf(character) !== -1) {
@@ -97,13 +97,15 @@ KeyboardUtils.getKeyChar = function(event) {
             }
         }
         if (character.length > 1) {
-            character = "<{0}>".format(character);
+            character = "<" + character + ">";
         }
     }
-    if (KeyboardUtils.decodeKeystroke(KeyboardUtils.encodeKeystroke(character)) === character) {
-        character = KeyboardUtils.encodeKeystroke(character);
+    if (!(character in _keyCharCache)) {
+        _keyCharCache[character] =
+            KeyboardUtils.decodeKeystroke(KeyboardUtils.encodeKeystroke(character)) === character
+                ? KeyboardUtils.encodeKeystroke(character) : character;
     }
-    return character;
+    return _keyCharCache[character];
 };
 
 KeyboardUtils.isWordChar = function(event) {
@@ -135,8 +137,11 @@ function _encodeKeystroke(s, k) {
     code = 8192 + (code << 4) + mod;
     return String.fromCharCode(code);
 }
+var _keyCharCache = Object.create(null);
+var _ekp = /<(?:Ctrl-)?(?:Alt-)?(?:Meta-)?(?:Shift-)?([^>]+|.)>/g;
 KeyboardUtils.encodeKeystroke = function (s) {
-    var ekp = /<(?:Ctrl-)?(?:Alt-)?(?:Meta-)?(?:Shift-)?([^>]+|.)>/g;
+    var ekp = _ekp;
+    ekp.lastIndex = 0;
     var mtches, ret = "", lastIndex = 0;
     while ((mtches = ekp.exec(s)) !== null) {
         ret += s.substr(lastIndex, mtches.index - lastIndex);
