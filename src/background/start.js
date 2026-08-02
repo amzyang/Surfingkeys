@@ -1352,6 +1352,13 @@ function start(browser) {
                         injectSnippetsIntoTab(sender.tab.id, data.snippets);
                     }
                 }
+                if (isMV3 && sender.url && !sender.url.startsWith(chrome.runtime.getURL("/"))) {
+                    // on MV3 web frames never evaluate snippets in the content
+                    // world(the userScripts API runs them), don't ship the whole
+                    // config to every frame of every page; extension pages
+                    // (options editor) still need it
+                    delete data.snippets;
+                }
             }
 
             _response(message, sendResponse, {
