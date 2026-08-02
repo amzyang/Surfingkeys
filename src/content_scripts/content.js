@@ -237,11 +237,16 @@ function start(browser) {
             }
         }).then((modes) => {
             _initContent(modes);
+            // in case the user script world got ready before content world(MV3,
+            // both at document_start), ask it to replay the user snippets
+            dispatchSKEvent('user', ["runUserScript"]);
             runtime.on('titleChanged', function() {
                 Mode.checkEventListener(() => {
                     modes.front.detach();
                     modes = _initModules();
                     _initContent(modes);
+                    // re-register user mappings into the rebuilt Trie(MV3)
+                    dispatchSKEvent('user', ["runUserScript"]);
                     modes.front.attach();
                 });
             });
