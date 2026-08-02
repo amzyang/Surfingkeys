@@ -1638,7 +1638,9 @@ function start(browser) {
                     }], invokeCallback);
                 };
                 if (r.length > 0) {
-                    if (r[0].js[0].code !== code) {
+                    // registrations persisted at document_idle(before 1.19.3) keep the
+                    // same code, so runAt alone has to trigger a re-registration
+                    if (r[0].js[0].code !== code || r[0].runAt !== "document_start") {
                         chrome.userScripts.unregister({ids:[userScriptId]}, registerSettingSnippets);
                     } else {
                         callback && callback();
