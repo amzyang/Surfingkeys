@@ -4,6 +4,7 @@ import {
     showPopup,
 } from '../common/utils.js';
 import { RUNTIME } from '../common/runtime.js';
+import readText from '../common/tts.js';
 
 export default (normal, command, omnibar) => {
     command('setProxy', 'setProxy <proxy_host>:<proxy_port> [proxy_type|PROXY]', function(args) {
