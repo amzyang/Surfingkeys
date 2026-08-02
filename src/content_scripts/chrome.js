@@ -13,16 +13,12 @@ function readText(text, options) {
         enqueue: true,
         voiceName: runtime.conf.defaultVoice
     };
-    var verbose = options.verbose;
     var stopPattern = /[\s\u00a0]/g,
         verbose = options.verbose,
         onEnd = options.onEnd;
     delete options.verbose;
     delete options.onEnd;
-    RUNTIME('read', {
-        content: text,
-        options: options
-    }, function(res) {
+    const onTtsEvent = function(res) {
         if (verbose) {
             if (res.ttsEvent.type === "start") {
                 showPopup(text);
@@ -50,7 +46,13 @@ function readText(text, options) {
             onEnd();
         }
         return res.ttsEvent.type !== "end";
-    });
+    };
+    // the background streams further TTS progress as onTtsEvent messages
+    runtime.on('onTtsEvent', onTtsEvent);
+    RUNTIME('read', {
+        content: text,
+        options: options
+    }, onTtsEvent);
 }
 
 start({

@@ -143,7 +143,6 @@ const runtime = (function() {
             editableBodyCare: true,
             enableAutoFocus: true,
             enableEmojiInsertion: false,
-            experiment: false,
             focusFirstCandidate: false,
             focusOnSaved: true,
             hintAlign: "center",
@@ -240,12 +239,6 @@ const runtime = (function() {
             }
         });
     }
-
-    self.getTopURL = function(cb) {
-        getTopURLPromise.then(function(url) {
-            cb(url);
-        });
-    };
 
     self.postTopMessage = function(msg) {
         getTopURLPromise.then(function(topUrl) {

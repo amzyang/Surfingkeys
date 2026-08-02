@@ -7,7 +7,6 @@ import {
     getBrowserName,
     getDocumentOrigin,
     getElements,
-    httpRequest,
     initSKFunctionListener,
     isEditable,
     isInUIFrame,
@@ -35,7 +34,7 @@ function createFront(insert, normal, hints, visual, browser) {
 
     function newFrontEnd() {
         frontendPromise = new Promise(function (resolve, reject) {
-            createUiHost(browser, (res) => {
+            createUiHost((res) => {
                 resolve(res);
                 applyUserSettings();
             });

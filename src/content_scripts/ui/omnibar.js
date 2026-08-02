@@ -540,10 +540,6 @@ function createOmnibar(front, clipboard) {
 
     var _start, _items, _showFolder, _page;
 
-    self.getPageSize = () => {
-        return runtime.conf.omnibarMaxResults;
-    };
-
     self.getHistoryCacheSize = () => {
         return runtime.conf.omnibarHistoryCacheSize;
     };
@@ -667,7 +663,7 @@ function createOmnibar(front, clipboard) {
     }
 
     self.openFocused = function() {
-        var ret = false, fi = self.resultsDiv.querySelector('li.focused');
+        var fi = self.resultsDiv.querySelector('li.focused');
         var url;
         if (fi) {
             url = fi.url;
@@ -992,7 +988,7 @@ function AddBookmark(omnibar) {
     var self = {
         focusFirstCandidate: true,
         prompt: `add bookmark${separatorHtml}`
-    }, folders, origFFC;
+    }, folders;
 
     self.onOpen = function(arg) {
         self.page = arg;
@@ -1482,8 +1478,6 @@ function Commands(omnibar, front) {
         prompt: ':',
     }, items = {};
 
-    var historyInc = 0;
-
     self.onOpen = function() {
         omnibar.resultsDiv.className = "commands";
 
@@ -1492,7 +1486,6 @@ function Commands(omnibar, front) {
             return;
         }
 
-        historyInc = -1;
         RUNTIME('getSettings', {
             key: 'cmdHistory'
         }, function(response) {
