@@ -27,8 +27,10 @@ import createDefaultMappings from '../common/default.js';
 import createOmnibar from './omnibar.js';
 import createCommands from './command.js';
 
+// module-level: shared by the Front modes and the ace editor callbacks below
+const clipboard = createClipboard();
+
 const Front = (function() {
-    const clipboard = createClipboard();
     Mode.init();
     const insert = createInsert();
     const normal = createNormal(insert);
@@ -1177,7 +1179,7 @@ function createAceEditor(normal, front) {
         });
         cm.on('0-register-set', function(data) {
             var lf = document.activeElement;
-            Clipboard.write(data.text);
+            clipboard.write(data.text);
             lf.focus();
         });
         var vim = cm.constructor.Vim;

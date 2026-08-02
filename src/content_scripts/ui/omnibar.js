@@ -28,6 +28,13 @@ import LLMChat from './llmchat';
 const separator = '➤';
 const separatorHtml = `<span class='separator'>${separator}</span>`;
 
+// the omnibar runs in the frontend iframe where the Normal mode instance is
+// unreachable, so marks are added straight through the background handler
+function addVIMark(mark, url) {
+    RUNTIME('addVIMark', {mark: {[mark]: {url: url, scrollLeft: 0, scrollTop: 0}}});
+    showBanner(`Mark '${mark}' added for: ${url}.`);
+}
+
 function createOmnibar(front, clipboard) {
     var self = new Mode("Omnibar");
 
@@ -224,7 +231,7 @@ function createOmnibar(front, clipboard) {
         code: function (mark) {
             var fi = self.resultsDiv.querySelector('li.focused');
             if (fi) {
-                Normal.addVIMark(mark, fi.url);
+                addVIMark(mark, fi.url);
             }
         }
     });
@@ -862,7 +869,7 @@ function OpenBookmarks(omnibar) {
             var fi = omnibar.resultsDiv.querySelector('li.focused');
             if (fi) {
                 var mark_char = String.fromCharCode(event.keyCode);
-                Normal.addVIMark(mark_char, fi.url);
+                addVIMark(mark_char, fi.url);
                 eaten = true;
             }
         }
