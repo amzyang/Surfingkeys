@@ -1148,16 +1148,21 @@ function start(browser) {
                     return;
                 }
                 const code = `import('./api.js').then((module) => {module.default("${chrome.runtime.getURL("/")}", (api, settings) => {${snippets}\n})});`;
+                // document_start so that user mappings become usable along with built-in
+                // ones, instead of waiting for document_idle(after page load).
+                const runAt = "document_start";
                 const registerSettingSnippets = () => {
                     chrome.userScripts.register([{
                         allFrames: true,
                         id: userScriptId,
                         matches: ['*://*/*', 'file:///*'],
+                        runAt,
                         js: [{code}]
                     }], invokeCallback);
                 };
                 if (r.length > 0) {
-                    if (r[0].js[0].code !== code) {
+                    // also re-register scripts persisted before runAt was introduced
+                    if (r[0].js[0].code !== code || r[0].runAt !== runAt) {
                         chrome.userScripts.unregister({ids:[userScriptId]}, registerSettingSnippets);
                     } else {
                         callback && callback();
