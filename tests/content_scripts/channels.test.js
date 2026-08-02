@@ -195,6 +195,21 @@ describe('user script world', () => {
         expect(snippets).not.toHaveBeenCalled();
     });
 
+    it('runs the snippets once when it is started twice in the same world', () => {
+        // A self-healed frame is injected a second copy on purpose, and a restored tab
+        // can get the registered copy and the startup replay both. The listeners share
+        // one event detail, which the first to run consumes.
+        const {start} = loadUserScript([{scope: 'five'}, {scope: 'five'}]);
+        const first = jest.fn();
+        const second = jest.fn();
+        start('chrome-extension://surfingkeys/', first);
+        start('chrome-extension://surfingkeys/', second);
+
+        runUserScript('five');
+        expect(first).not.toHaveBeenCalled();
+        expect(second).toHaveBeenCalledTimes(1);
+    });
+
     it('never becomes a receiving end that could eat its own reply', () => {
         // The scope it asks for is answered by the content script in this same
         // document, and every world of a document is dispatched that message. A
@@ -301,6 +316,7 @@ describe('content script side of the handshake', () => {
     // on chromium (MV3) and exists nowhere else.
     const loadContentScript = (manifestVersion = 3) => {
         let replyWithSettings = () => {};
+        const sent = [];
         const store = {get: (keys, cb) => cb && cb({}), set: (items, cb) => cb && cb()};
         global.chrome = {
             runtime: {
@@ -308,6 +324,7 @@ describe('content script side of the handshake', () => {
                 getManifest: () => ({manifest_version: manifestVersion}),
                 onMessage: {addListener: jest.fn()},
                 sendMessage: (args, cb) => {
+                    sent.push(args.action);
                     if (!cb) {
                         return;
                     }
@@ -336,6 +353,7 @@ describe('content script side of the handshake', () => {
         return {
             scope,
             started,
+            sent,
             addListener: global.chrome.runtime.onMessage.addListener,
             start: () => content.start({usePdfViewer: () => {}, readText: () => {}}),
             settingsArrive: () => replyWithSettings(),
@@ -386,6 +404,68 @@ describe('content script side of the handshake', () => {
 
         announce('surfingkeys:userScriptListening');
         expect(started).toEqual([]);
+    });
+
+    it('starts the snippets again after a self-heal, behind the same handshake', async () => {
+        const {start, announce, settingsArrive, started, sent, addListener} = loadContentScript();
+        start();
+        settingsArrive();
+        announce();
+        await Promise.resolve();
+        expect(started).toEqual([['runUserScript']]);
+
+        // document.open() took every listener, the user script world's included, so
+        // the sentinel goes unheard and the content script rebuilds itself.
+        const dispatch = window.dispatchEvent.bind(window);
+        const swallowSentinel = jest.spyOn(window, 'dispatchEvent')
+            .mockImplementation((evt) => evt.type === 'sentinel' || dispatch(evt));
+        addListener.mock.calls[0][0]({subject: 'titleChanged'}, {}, () => {});
+        swallowSentinel.mockRestore();
+
+        expect(sent).toContain('injectUserScript');
+        expect(started).toEqual([['runUserScript']]);
+        announce();
+        expect(started).toEqual([['runUserScript']]);
+        settingsArrive();
+        expect(started).toEqual([['runUserScript'], ['runUserScript']]);
+    });
+
+    describe('frontend prewarm', () => {
+        let focused;
+        beforeEach(() => {
+            jest.useFakeTimers();
+            focused = true;
+            jest.spyOn(document, 'hasFocus').mockImplementation(() => focused);
+        });
+        afterEach(() => {
+            jest.restoreAllMocks();
+            jest.useRealTimers();
+        });
+
+        const prewarmed = (scope) => {
+            const seen = jest.fn();
+            document.addEventListener(`surfingkeys:${scope}:ensureFrontEnd`, seen);
+            return seen;
+        };
+
+        it('builds the frontend of a focused top frame once idle', () => {
+            const {start, settingsArrive, scope} = loadContentScript();
+            const seen = prewarmed(scope);
+            start();
+            settingsArrive();
+            jest.advanceTimersByTime(1500);
+            expect(seen).toHaveBeenCalledTimes(1);
+        });
+
+        it('skips it for a tab that lost focus before the idle callback ran', () => {
+            const {start, settingsArrive, scope} = loadContentScript();
+            const seen = prewarmed(scope);
+            start();
+            settingsArrive();
+            focused = false;
+            jest.advanceTimersByTime(1500);
+            expect(seen).not.toHaveBeenCalled();
+        });
     });
 
     it('answers the scope of its own document', () => {
