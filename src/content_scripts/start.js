@@ -1,15 +1,23 @@
 import { RUNTIME } from './common/runtime.js';
 import {
+    attachFaviconToImgSrc,
     setSanitizedContent,
 } from './common/utils.js';
 import { marked } from 'marked';
 
 RUNTIME("getTopSites", null, function(response) {
-    var urls = response.urls.map(function(u) {
-        const favUrl = chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(u.url)}`);
-        return `<li><a href="${u.url}"><i style="background:url(${favUrl}) no-repeat"></i>${u.title}</a></li>`;
+    const ul = document.querySelector("#topSites>ul");
+    response.urls.forEach(function(u) {
+        const li = document.createElement("li");
+        const a = document.createElement("a");
+        a.href = u.url;
+        const img = document.createElement("img");
+        img.onerror = () => img.style.visibility = "hidden";
+        attachFaviconToImgSrc(u, img);
+        a.append(img, u.title);
+        li.appendChild(a);
+        ul.appendChild(li);
     });
-    setSanitizedContent(document.querySelector("#topSites>ul"), urls.join("\n"));
     var source = document.getElementById('quickIntroSource').innerHTML;
     setSanitizedContent(document.querySelector('#quickIntro'), marked.parse(source));
 

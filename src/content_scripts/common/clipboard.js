@@ -25,36 +25,21 @@ function createClipboard() {
         });
     }
 
-    /**
-     * Read from clipboard.
-     *
-     * @param {function} onReady a callback function to handle text read from clipboard.
-     * @name Clipboard.read
-     *
-     * @example
-     * Clipboard.read(function(response) {
-     *   console.log(response.data);
-     * });
-     */
-    self.read = function(onReady) {
-        if (getBrowserName().startsWith("Safari")) {
-            RUNTIME('readClipboard', null, function(response) {
-                onReady(response);
-            });
-            return;
-        }
+    function readViaNativeMessaging(onReady) {
+        RUNTIME('readClipboard', null, onReady);
+    }
 
-        if (getBrowserName() === "Firefox" &&
-            typeof navigator.clipboard === 'object' && typeof navigator.clipboard.readText === 'function') {
-          navigator.clipboard.readText().then((data) => {
-              // call back onReady in a different thread to avoid breaking UI operations
-              // such as Front.openOmnibar
-              setTimeout(function() {
-                  onReady({ data });
-              }, 0);
-          });
-          return;
-        }
+    function readViaNavigatorClipboard(onReady) {
+        navigator.clipboard.readText().then((data) => {
+            // call back onReady in a different thread to avoid breaking UI operations
+            // such as Front.openOmnibar
+            setTimeout(function() {
+                onReady({ data });
+            }, 0);
+        });
+    }
+
+    function readViaExecCommand(onReady) {
         clipboardActionWithSelectionPreserved(function() {
             holder.value = '';
             setSanitizedContent(holder, '');
@@ -66,7 +51,50 @@ function createClipboard() {
             data = holder.innerHTML.replace(/<br>/gi,"\n");
         }
         onReady({data: data});
-    };
+    }
+
+    function writeViaExecCommand(text, onWritten) {
+        clipboardActionWithSelectionPreserved(function() {
+            holder.value = text;
+            holder.select();
+            document.execCommand('copy');
+            holder.value = '';
+        });
+        onWritten();
+    }
+
+    // The write is asynchronous and can fail -- on Safari it goes through the
+    // native app, which can be unreachable or refuse the write -- so the outcome
+    // is reported once the background has answered.
+    function writeViaBackground(text, onWritten) {
+        RUNTIME("writeClipboard", { text }, function(response) {
+            onWritten(response && response.error);
+        });
+    }
+
+    // resolve the strategies once: Safari reads through native messaging;
+    // Firefox uses navigator.clipboard when present; execCommand otherwise.
+    // navigator.clipboard.writeText does not work on http sites, nor in
+    // chrome's background script, hence Chrome writes via execCommand here.
+    const browserName = getBrowserName();
+    const read = browserName.startsWith("Safari") ? readViaNativeMessaging
+        : (browserName === "Firefox" && typeof navigator.clipboard === 'object'
+            && typeof navigator.clipboard.readText === 'function') ? readViaNavigatorClipboard
+        : readViaExecCommand;
+    const write = browserName === "Chrome" ? writeViaExecCommand : writeViaBackground;
+
+    /**
+     * Read from clipboard.
+     *
+     * @param {function} onReady a callback function to handle text read from clipboard.
+     * @name Clipboard.read
+     *
+     * @example
+     * Clipboard.read(function(response) {
+     *   console.log(response.data);
+     * });
+     */
+    self.read = read;
 
     /**
      * Write text to clipboard.
@@ -82,34 +110,13 @@ function createClipboard() {
      * Clipboard.write(window.location.href);
      */
     self.write = function(text, notice) {
-        const cb = () => {
-            if (notice === null) {
-                return;
+        write(text, function(error) {
+            if (error) {
+                showBanner("Failed to copy: " + error, 3000);
+            } else if (notice !== null) {
+                showBanner(notice === undefined ? "Copied: " + text : notice);
             }
-            showBanner(notice === undefined ? "Copied: " + text : notice);
-        };
-        // navigator.clipboard.writeText does not work on http site, and in chrome's background script.
-        if (getBrowserName() === "Chrome") {
-            clipboardActionWithSelectionPreserved(function() {
-                holder.value = text;
-                holder.select();
-                document.execCommand('copy');
-                holder.value = '';
-            });
-            cb();
-        } else {
-            // works for Firefox and Safari now. The write is asynchronous and can
-            // fail -- on Safari it goes through the native app, which can be
-            // unreachable or refuse the write -- so wait for its answer rather than
-            // claiming success before we know it happened.
-            RUNTIME("writeClipboard", { text }, function(response) {
-                if (response && response.error) {
-                    showBanner("Failed to copy: " + response.error, 3000);
-                } else {
-                    cb();
-                }
-            });
-        }
+        });
     };
 
     return self;

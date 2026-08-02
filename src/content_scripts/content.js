@@ -116,11 +116,7 @@ const userConfPromise = new Promise(function (resolve, reject) {
 });
 
 function applySettings(api, normal, rs) {
-    for (var k in rs) {
-        if (runtime.conf.hasOwnProperty(k)) {
-            runtime.conf[k] = rs[k];
-        }
-    }
+    runtime.applyConfDelta(rs);
     if ('findHistory' in rs) {
         runtime.conf.lastQuery = rs.findHistory.length ? rs.findHistory[0] : "";
     }
