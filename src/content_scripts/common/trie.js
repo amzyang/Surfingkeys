@@ -62,6 +62,18 @@ Trie.prototype = {
         return found;
     },
 
+    hasMappings: function() {
+        if (this.hasOwnProperty('meta')) {
+            return true;
+        }
+        for (var k in this) {
+            if (k.length === 1) {
+                return true;
+            }
+        }
+        return false;
+    },
+
     getWords: function(prefix, withoutStem) {
         var ret = [], prefix = (prefix || "") + (withoutStem ? "" : (this.stem || ""));
         if (this.hasOwnProperty('meta')) {
