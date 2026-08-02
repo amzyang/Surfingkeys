@@ -60,6 +60,7 @@ function ensureRegex(regexName) {
     }
 }
 
+var _prewarmScheduled = false;
 function applyRuntimeConf(normal) {
     ensureRegex("prevLinkRegex");
     ensureRegex("nextLinkRegex");
@@ -80,6 +81,15 @@ function applyRuntimeConf(normal) {
                 _browser.usePdfViewer();
             } else {
                 normal.enable();
+                // prewarm the frontend iframe off the critical path, so the first
+                // UI command(omnibar/keystroke hint) does not pay its cold start;
+                // once per page — applyRuntimeConf reruns on every settings broadcast
+                if (window === top && !_prewarmScheduled && document.hasFocus()) {
+                    _prewarmScheduled = true;
+                    // focus may have moved to another tab by the time the page is idle
+                    const prewarm = () => document.hasFocus() && dispatchSKEvent("ensureFrontEnd");
+                    window.requestIdleCallback ? requestIdleCallback(prewarm, {timeout: 1500}) : setTimeout(prewarm, 500);
+                }
             }
             Mode.showStatus();
         }
