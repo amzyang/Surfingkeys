@@ -60,6 +60,7 @@ function ensureRegex(regexName) {
     }
 }
 
+var _prewarmScheduled = false;
 function applyRuntimeConf(normal) {
     ensureRegex("prevLinkRegex");
     ensureRegex("nextLinkRegex");
@@ -81,8 +82,10 @@ function applyRuntimeConf(normal) {
             } else {
                 normal.enable();
                 // prewarm the frontend iframe off the critical path, so the first
-                // UI command(omnibar/keystroke hint) does not pay its cold start
-                if (window === top && document.hasFocus()) {
+                // UI command(omnibar/keystroke hint) does not pay its cold start;
+                // once per page — applyRuntimeConf reruns on every settings broadcast
+                if (window === top && !_prewarmScheduled && document.hasFocus()) {
+                    _prewarmScheduled = true;
                     const prewarm = () => dispatchSKEvent("ensureFrontEnd");
                     window.requestIdleCallback ? requestIdleCallback(prewarm, {timeout: 1500}) : setTimeout(prewarm, 500);
                 }
