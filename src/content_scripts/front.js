@@ -332,6 +332,7 @@ function createFront(insert, normal, hints, visual, browser) {
         onEditorSaved = onWrite || updateElementBehindEditor;
         const cmd = {
             action: 'showEditor',
+            activateContent: true,
             type: type || "textarea",
             initial_line: initial_line,
             content: content
@@ -347,7 +348,8 @@ function createFront(insert, normal, hints, visual, browser) {
             RUNTIME('focusTabByIndex');
         } else {
             self.command({
-                action: 'chooseTab'
+                action: 'chooseTab',
+                activateContent: true
             });
         }
     };
@@ -392,6 +394,7 @@ function createFront(insert, normal, hints, visual, browser) {
     var _userURLsHasCustomOnEnter = false;
     self.openOmnibar = function(args) {
         args.action = 'openOmnibar';
+        args.activateContent = true;
         _userURLsHasCustomOnEnter = false;
         if (args.type === "LLMChat") {
             args.extra = args.extra || {};
@@ -496,6 +499,7 @@ function createFront(insert, normal, hints, visual, browser) {
         setTimeout(() => {
             self.command({
                 action: "showStatus",
+                activateContent: true,
                 contents: msgs,
                 duration: duration
             });
@@ -585,7 +589,8 @@ function createFront(insert, normal, hints, visual, browser) {
         hidePopup,
         openFinder: () => {
             self.command({
-                action: "openFinder"
+                action: "openFinder",
+                activateContent: true
             });
         },
         showBanner: (msg, linger_time) => {

@@ -34,8 +34,9 @@ function createUiHost(onload) {
         if (_message.toFrontend) {
             // forward message to frontend
             ifr.contentWindow.postMessage({surfingkeys_frontend_data: _message}, frontEndURL);
-            if (_message.toFrontend && event.source
-                && ['showStatus', 'showEditor', 'openOmnibar', 'openFinder', 'chooseTab'].indexOf(_message.action) !== -1) {
+            // commands flagged with activateContent take over the input focus,
+            // so their sender becomes the active content window
+            if (_message.activateContent && event.source) {
                 if (!activeContent || activeContent.window !== event.source) {
                     // reset active Content
 
