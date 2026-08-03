@@ -1216,8 +1216,8 @@ function start(browser) {
     // the closing braces; the api.js specifier differs between the registered
     // script('./api.js', kept byte-identical with persisted registrations) and
     // dynamic execution(absolute URL)
-    function buildSnippetsCode(snippets, apiSpecifier) {
-        return `import('${apiSpecifier}').then((module) => {module.default("${chrome.runtime.getURL("/")}", (api, settings) => {${snippets}\n})});`;
+    function buildSnippetsCode(snippets, apiSpecifier, runNow) {
+        return `import('${apiSpecifier}').then((module) => {module.default("${chrome.runtime.getURL("/")}", (api, settings) => {${snippets}\n}${runNow ? ", true" : ""})});`;
     }
     // last snippets known registered(null = known unregistered), saves a
     // userScripts.getScripts round trip + full code compare on every frame's
@@ -1288,16 +1288,18 @@ function start(browser) {
         }
     }
 
-    function injectSnippetsIntoTab(tabId, snippets) {
+    function injectSnippetsIntoTab(tabId, snippets, frameIds) {
         // scripting.executeScript rejects world USER_SCRIPT; userScripts.execute
         // (Chrome 135+) is the API for dynamic injection into that world
         if (!isUserScriptsAvailable() || !chrome.userScripts.execute) {
             return;
         }
-        const code = buildSnippetsCode(snippets, chrome.runtime.getURL("/") + 'api.js');
+        // runNow: by injection time the frame's content world is already
+        // initialized, so its one-shot runUserScript dispatch won't come again
+        const code = buildSnippetsCode(snippets, chrome.runtime.getURL("/") + 'api.js', true);
         // fails for tabs we cannot access(chrome://, web store, uncommitted navigations)
         chrome.userScripts.execute({
-            target: { tabId: tabId },
+            target: frameIds ? { tabId: tabId, frameIds: frameIds } : { tabId: tabId },
             js: [{code}]
         }).catch(() => {});
     }
@@ -1349,6 +1351,12 @@ function start(browser) {
                     const extPages = ["/pages/pdf_viewer.html", "/pages/markdown.html"];
                     if (extPages.some(p => sender.url.startsWith(chrome.runtime.getURL(p)))) {
                         injectSnippetsIntoTab(sender.tab.id, data.snippets);
+                    } else if (sender.tab && sender.frameId !== undefined && /^about:/.test(sender.url)) {
+                        // about:srcdoc/about:blank frames run content scripts
+                        // (match_about_blank) but the registered user script can't
+                        // match about: URLs(the userScripts API has no
+                        // matchOriginAsFallback) — inject into that frame directly
+                        injectSnippetsIntoTab(sender.tab.id, data.snippets, [sender.frameId]);
                     }
                 }
                 if (isMV3 && sender.url && !sender.url.startsWith(chrome.runtime.getURL("/"))) {
