@@ -303,7 +303,7 @@ const api = {
     },
 };
 
-export default (extensionRootUrl, uf) => {
+export default (extensionRootUrl, uf, runNow) => {
     EXTENSION_ROOT_URL = extensionRootUrl;
     if (isInUIFrame()) return;
     userScriptTask = () => {
@@ -315,7 +315,10 @@ export default (extensionRootUrl, uf) => {
         }
         applyUserSettings({settings, error});
     };
-    if (window === top) {
+    // runNow covers dynamic injection into sub-frames(about:srcdoc etc.),
+    // where the content script's one-shot runUserScript dispatch has already
+    // fired before this module loaded
+    if (window === top || runNow) {
         userScriptTask();
     }
 };
