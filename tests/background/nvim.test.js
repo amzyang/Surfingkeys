@@ -20,6 +20,12 @@ const createPortStub = () => {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+const launchNvimServer = () => {
+    const nvimServer = createNvimServer();
+    nvimServer.ensure();
+    return nvimServer;
+};
+
 describe('createNvimServer', () => {
     let port;
 
@@ -36,15 +42,40 @@ describe('createNvimServer', () => {
         global.self = {crypto: {getRandomValues: (a) => a.fill(7)}};
     });
 
-    it('opens one connection and asks the host to start its server', () => {
+    it('launches no host until it is asked for', () => {
         createNvimServer();
+        expect(chrome.runtime.connectNative).not.toHaveBeenCalled();
+    });
+
+    it('launches the host for a request', async () => {
+        const nvimServer = createNvimServer();
+        nvimServer.request({command: 'Settings.read'}).catch(() => {});
+        expect(chrome.runtime.connectNative).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects the instance of a host that was never there, and tries again when asked', async () => {
+        const nvimServer = createNvimServer();
+        const instance = nvimServer.ensure();
+        port.drop({message: 'Specified native messaging host not found.'});
+        await expect(instance).rejects.toThrow('Specified native messaging host not found.');
+
+        port = createPortStub();
+        chrome.runtime.connectNative.mockImplementation(() => port);
+        const retried = nvimServer.ensure();
+        expect(chrome.runtime.connectNative).toHaveBeenCalledTimes(2);
+        port.start();
+        await expect(retried).resolves.toMatchObject({url: expect.stringContaining('127.0.0.1:4321/')});
+    });
+
+    it('opens one connection and asks the host to start its server', () => {
+        launchNvimServer();
         expect(chrome.runtime.connectNative).toHaveBeenCalledTimes(1);
         expect(chrome.runtime.connectNative).toHaveBeenCalledWith('surfingkeys');
         expect(port.sent[0]).toMatchObject({startServer: true});
     });
 
     it('is not ready until the host has answered', async () => {
-        const nvimServer = createNvimServer();
+        const nvimServer = launchNvimServer();
         expect(nvimServer.ready).toBe(false);
         port.start();
         await flush();
@@ -54,7 +85,7 @@ describe('createNvimServer', () => {
 
     describe('request', () => {
         it('sends the command on the connection that is already open', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             const reply = nvimServer.request({command: 'Settings.read'});
             await flush();
@@ -68,7 +99,7 @@ describe('createNvimServer', () => {
         });
 
         it('waits for the host to prove it is there before sending', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             nvimServer.request({command: 'Settings.read'});
             await flush();
             // Only startServer so far: a connection that may have no host behind it
@@ -80,7 +111,7 @@ describe('createNvimServer', () => {
         });
 
         it('gives each reply to the request it belongs to', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             const first = nvimServer.request({command: 'first'});
             const second = nvimServer.request({command: 'second'});
@@ -95,7 +126,7 @@ describe('createNvimServer', () => {
         });
 
         it('accepts a reply with no id from a server.lua that does not echo one', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             const reply = nvimServer.request({command: 'Settings.read'});
             await flush();
@@ -104,7 +135,7 @@ describe('createNvimServer', () => {
         });
 
         it('does not mistake the editor reply for an outstanding request', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             const reply = nvimServer.request({command: 'Settings.read'});
             await flush();
@@ -120,7 +151,7 @@ describe('createNvimServer', () => {
         });
 
         it('reports a dropped connection instead of waiting on it', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             await flush();
             const reply = nvimServer.request({command: 'Settings.read'});
@@ -130,7 +161,7 @@ describe('createNvimServer', () => {
         });
 
         it('reports a host that was never there', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             const reply = nvimServer.request({command: 'Settings.read'});
             // Never answered startServer, so nothing was ever running.
             port.drop({message: 'No such native application surfingkeys'});
@@ -140,7 +171,7 @@ describe('createNvimServer', () => {
         });
 
         it('lets a caller that has given up release its request', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             const abandon = new AbortController();
             const abandoned = nvimServer.request({command: 'Settings.read'},
@@ -159,7 +190,7 @@ describe('createNvimServer', () => {
         });
 
         it('does not send a request that was abandoned before the host answered', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             const abandon = new AbortController();
             const abandoned = nvimServer.request({command: 'Settings.read'},
                 {signal: abandon.signal});
@@ -183,7 +214,7 @@ describe('createNvimServer', () => {
         // Reconnecting the instant a host dies would spawn `nvim` as fast as the OS
         // can fail it.
         it('waits before relaunching a host that had been working', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             const replacement = createPortStub();
             chrome.runtime.connectNative.mockImplementation(() => replacement);
@@ -199,7 +230,7 @@ describe('createNvimServer', () => {
         });
 
         it('waits longer each time the relaunch fails too, up to a cap', () => {
-            createNvimServer();
+            launchNvimServer();
             port.start();
             const attemptAfter = (ms) => {
                 const before = chrome.runtime.connectNative.mock.calls.length;
@@ -220,7 +251,7 @@ describe('createNvimServer', () => {
         });
 
         it('gives a host that answered the short wait again', () => {
-            createNvimServer();
+            launchNvimServer();
             port.start();
             const second = createPortStub();
             chrome.runtime.connectNative.mockImplementation(() => second);
@@ -236,7 +267,7 @@ describe('createNvimServer', () => {
         });
 
         it('never gives up, so fixing the host brings the editor back', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             let dying = port;
             for (let i = 0; i < 20; i++) {
@@ -253,7 +284,7 @@ describe('createNvimServer', () => {
         // A caller waiting for the editor waits once, through however many
         // launches that takes.
         it('settles the instance a caller is already holding', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             await Promise.resolve();
             const replacement = createPortStub();
@@ -276,7 +307,7 @@ describe('createNvimServer', () => {
         });
 
         it('reconnects and serves a request on the new connection', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             const replacement = createPortStub();
             chrome.runtime.connectNative.mockImplementation(() => replacement);
@@ -296,7 +327,7 @@ describe('createNvimServer', () => {
         });
 
         it('refuses a request made while the relaunch is still waiting', async () => {
-            const nvimServer = createNvimServer();
+            const nvimServer = launchNvimServer();
             port.start();
             chrome.runtime.connectNative.mockImplementation(() => createPortStub());
             port.drop({message: 'Native host has exited.'});

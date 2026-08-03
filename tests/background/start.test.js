@@ -2391,7 +2391,7 @@ describe('start', () => {
     describe('native messaging', () => {
         it('hands the neovim server url back to the page', async () => {
             const nm = {postMessage: jest.fn()};
-            const nvimServer = {instance: Promise.resolve({url: '127.0.0.1:1234/pw', nm})};
+            const nvimServer = {ensure: () => Promise.resolve({url: '127.0.0.1:1234/pw', nm})};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch(
                 {action: 'connectNative', needResponse: true, mode: 'nvim'}, senderFor(12));
@@ -2401,7 +2401,7 @@ describe('start', () => {
         });
 
         it('reports a native connection failure', async () => {
-            const nvimServer = {instance: Promise.reject(new Error('no nvim'))};
+            const nvimServer = {ensure: () => Promise.reject(new Error('no nvim'))};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'connectNative', needResponse: true}, senderFor(12));
             await flushPromises();
@@ -2410,7 +2410,7 @@ describe('start', () => {
         });
 
         it('leaves useNeovim to the user settings, whatever the state of the host', () => {
-            const nvimServer = {ready: true, instance: Promise.resolve({})};
+            const nvimServer = {ready: true, ensure: () => Promise.resolve({})};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
             expect(sendResponse.mock.calls[0][0].settings).not.toHaveProperty('useNeovim');
