@@ -86,6 +86,7 @@ function createChromeMock(opts = {}) {
             connectNative: jest.fn(),
             onMessage: makeEvent(),
             onInstalled: makeEvent(),
+            onStartup: makeEvent(),
             onUserScriptMessage: makeEvent(),
         },
         tabs: {
@@ -128,6 +129,7 @@ function createChromeMock(opts = {}) {
         storage: {
             local: makeStorageArea(storage.local),
             sync: makeStorageArea(storage.sync),
+            onChanged: makeEvent(),
         },
         commands: { onCommand: makeEvent() },
         bookmarks: {
@@ -233,6 +235,24 @@ function mockFetchFailure(error = new Error('offline')) {
 // Let queued promise callbacks (request(), _loadSettingsFromUrl(), ...) run.
 const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/**
+ * Installs the globals `src/background/start.js` touches at import/start time.
+ * Returns a handle whose `messageListener` is the callback registered through
+ * `chrome.runtime.onMessage.addListener`, i.e. the runtime message entry point.
+ */
+function installChromeMock() {
+    global.chrome = createChromeMock({ manifestVersion: 2 });
+    global.DOMRect = jest.fn();
+    window.crypto = { getRandomValues: jest.fn() };
+
+    const listeners = global.chrome.runtime.onMessage.listeners;
+    return {
+        get messageListener() {
+            return listeners[listeners.length - 1];
+        },
+    };
+}
+
 module.exports = {
     makeEvent,
     createChromeMock,
@@ -240,4 +260,5 @@ module.exports = {
     mockFetchText,
     mockFetchFailure,
     flushPromises,
+    installChromeMock,
 };

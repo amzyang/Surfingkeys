@@ -5,6 +5,11 @@ import {
 document.addEventListener("surfingkeys:defaultSettingsLoaded", function(evt) {
     const { normal, api } = evt.detail;
 
+    function disableNvim(reason) {
+        setSanitizedContent(document.querySelector('#overlay'), reason);
+        document.body.classList.add("neovim-disabled");
+    }
+
     const np  = new Promise((resolve, reject) => {
         import(/* webpackIgnore: true */ './neovim_lib.js').then((nvimlib) => {
             nvimlib.default().then(({nvim, destroy}) => {
@@ -26,6 +31,14 @@ document.addEventListener("surfingkeys:defaultSettingsLoaded", function(evt) {
                 nvim.on('nvim:close', () => {
                     window.close();
                 });
+                nvim.on('nvim:connection_failed', () => {
+                    disableNvim("Failed to connect to the neovim server.");
+                    normal.enter();
+                });
+                nvim.on('nvim:decode_error', () => {
+                    disableNvim("Lost sync with the neovim server.");
+                    normal.enter();
+                });
                 resolve(nvim);
             });
         });
@@ -33,8 +46,7 @@ document.addEventListener("surfingkeys:defaultSettingsLoaded", function(evt) {
     np.then((nvim) => {
         RUNTIME('connectNative', {mode: "standalone"}, (resp) => {
             if (resp.error) {
-                setSanitizedContent(document.querySelector('#overlay'), resp.error);
-                document.body.classList.add("neovim-disabled");
+                disableNvim(resp.error);
             } else {
                 normal.exit();
                 api.mapkey('<Alt-i>', '', function() {

@@ -1,24 +1,35 @@
-import { EventEmitter } from 'events';
 import Nvim from 'src/nvim/Nvim';
 
 import type { Transport } from 'src/nvim/types';
 
-const mockTransport: Transport = Object.assign(new EventEmitter(), {
-    send: jest.fn()
-});
+type MockTransport = Transport & { send: jest.Mock; close: jest.Mock };
 
-jest.mock('src/nvim/transport/websocket', (url) => {
-    return (url) => {
-        return mockTransport;
+const mockTransports: MockTransport[] = [];
+
+jest.mock('src/nvim/transport/websocket', () => {
+    // The factory may not close over imports, so pull EventEmitter in lazily.
+    const { EventEmitter: MockEmitter } = require('events');
+    return function () {
+        const transport = Object.assign(new MockEmitter(), {
+            send: jest.fn(),
+            close: jest.fn(),
+        });
+        mockTransports.push(transport);
+        return transport;
     };
 });
 
+const latestTransport = (): MockTransport => mockTransports[mockTransports.length - 1];
+
 describe('Nvim', () => {
     let nvim: Nvim;
+    let mockTransport: MockTransport;
 
     beforeEach(() => {
+        mockTransports.length = 0;
         nvim = new Nvim();
         nvim.connect("ws://mock");
+        mockTransport = latestTransport();
     });
 
     describe('notification', () => {
@@ -127,5 +138,72 @@ describe('Nvim', () => {
 
         expect(callback1).toHaveBeenCalled();
         expect(callback2).toHaveBeenCalled();
+    });
+
+    describe('connection lifecycle', () => {
+        test('rejects pending requests when the connection closes', async () => {
+            const pending = nvim.getMode();
+
+            mockTransport.emit('nvim:close');
+
+            await expect(pending).rejects.toThrow('Neovim connection closed');
+        });
+
+        test('closes the previous transport when connecting to another url', () => {
+            const previous = mockTransport;
+
+            nvim.connect('ws://another');
+
+            expect(previous.close).toHaveBeenCalled();
+            expect(mockTransports).toHaveLength(2);
+        });
+
+        test('ignores data coming from a transport it replaced', () => {
+            const previous = mockTransport;
+            const callback = jest.fn();
+            nvim.on('onSomething', callback);
+
+            nvim.connect('ws://another');
+            previous.emit('nvim:data', [2, 'onSomething', 'stale']);
+
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        test('reuses the connection when the url did not change', () => {
+            const connectExisting = jest.fn();
+            nvim.on('nvim:connectExisting', connectExisting);
+            mockTransport.emit('nvim:open');
+
+            nvim.connect('ws://mock');
+
+            expect(connectExisting).toHaveBeenCalled();
+            expect(mockTransports).toHaveLength(1);
+        });
+
+        test('rejects pending requests when it moves to another url', async () => {
+            const pending = nvim.getMode();
+
+            nvim.connect('ws://another');
+
+            await expect(pending).rejects.toThrow('Neovim connection closed');
+        });
+
+        test('does not report a url switch as a shutdown', () => {
+            const closed = jest.fn();
+            nvim.on('nvim:close', closed);
+
+            nvim.connect('ws://another');
+
+            expect(closed).not.toHaveBeenCalled();
+        });
+
+        test('forwards `nvim:decode_error`', () => {
+            const callback = jest.fn();
+            nvim.on('nvim:decode_error', callback);
+
+            mockTransport.emit('nvim:decode_error', new Error('bad frame'));
+
+            expect(callback).toHaveBeenCalled();
+        });
     });
 });
