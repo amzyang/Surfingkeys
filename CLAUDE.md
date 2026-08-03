@@ -36,7 +36,8 @@ npm test -- --testPathPattern=trie    # 按文件名模式匹配运行测试
 npm test -- tests/nvim/               # Neovim 集成测试
 ```
 
-Jest 配置：jsdom 环境，Puppeteer 用于端到端测试。
+Jest 配置：jsdom 环境，全部为单元测试，无端到端测试。`config/jest/afterEnv.js`
+为 jsdom 补上 `TextEncoder`/`TextDecoder`（`src/background` 的依赖在导入期就会用到）。
 
 ### 加载扩展到浏览器
 
