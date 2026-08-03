@@ -1794,10 +1794,6 @@ function start(browser) {
 
     function onFullSettingsRequested(data, callback) {
         data.isMV3 = isMV3;
-        // `ready`, not `instance`: a pending connection may have no host behind it. A
-        // boolean, because a content script receives a promise as a truthy empty
-        // object.
-        data.useNeovim = !!(browser.nvimServer && browser.nvimServer.ready);
         data.isUserScriptsAvailable = isUserScriptsAvailable();
         // Sent so a page can decide whether the split-view mapping exists at all,
         // which only the background can answer: a content script cannot see
@@ -2701,20 +2697,25 @@ function start(browser) {
     chrome.runtime.setUninstallURL("http://brookhong.github.io/2018/01/30/why-did-you-uninstall-surfingkeys.html");
 
     self.connectNative = function (message, sender, sendResponse) {
-        if (browser.nvimServer && browser.nvimServer.instance) {
-            browser.nvimServer.instance.then(({url, nm}) => {
-                nm.postMessage({
-                    mode: message.mode
-                });
-                _response(message, sendResponse, {
-                    url,
-                });
-            }).catch((error) => {
-                _response(message, sendResponse, {
-                    error,
-                });
+        if (!browser.nvimServer || !browser.nvimServer.instance) {
+            _response(message, sendResponse, {
+                error: "Neovim native messaging host is not available."
             });
+            return;
         }
+        browser.nvimServer.instance.then(({url, nm}) => {
+            nm.postMessage({
+                mode: message.mode
+            });
+            _response(message, sendResponse, {
+                url,
+            });
+        }).catch((error) => {
+            // An Error instance would serialize to `{}` over runtime messaging.
+            _response(message, sendResponse, {
+                error: error.message,
+            });
+        });
     };
 }
 
