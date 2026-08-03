@@ -1814,16 +1814,18 @@ function start(browser) {
         }
     }
 
-    function injectSnippetsIntoTab(tabId, snippets) {
+    function injectSnippetsIntoTab(tabId, snippets, frameIds) {
         // scripting.executeScript rejects world USER_SCRIPT; userScripts.execute
         // (Chrome 135+) is the API for dynamic injection into that world
         if (!isUserScriptsAvailable() || !chrome.userScripts.execute) {
             return;
         }
+        // the content script starts the snippets once this copy announces it is
+        // listening, however long after the frame's own start it is injected
         const code = buildSnippetsCode(snippets, chrome.runtime.getURL("/") + 'api.js');
         // fails for tabs we cannot access(chrome://, web store, uncommitted navigations)
         chrome.userScripts.execute({
-            target: { tabId: tabId },
+            target: frameIds ? { tabId: tabId, frameIds: frameIds } : { tabId: tabId },
             js: [{code}]
         }).then((results) => {
             const failed = results.find((r) => r.error);
@@ -1891,6 +1893,12 @@ function start(browser) {
                     const extPages = ["/pages/pdf_viewer.html", "/pages/markdown.html"];
                     if (extPages.some(p => sender.url.startsWith(chrome.runtime.getURL(p)))) {
                         injectSnippetsIntoTab(sender.tab.id, data.snippets);
+                    } else if (sender.tab && sender.frameId !== undefined && /^about:/.test(sender.url)) {
+                        // about:srcdoc/about:blank frames run content scripts
+                        // (match_about_blank) but the registered user script can't
+                        // match about: URLs(the userScripts API has no
+                        // matchOriginAsFallback) — inject into that frame directly
+                        injectSnippetsIntoTab(sender.tab.id, data.snippets, [sender.frameId]);
                     }
                 }
                 if (isMV3 && sender.url && !sender.url.startsWith(chrome.runtime.getURL("/"))) {
