@@ -108,31 +108,61 @@ function generatePassword() {
     return Array.from(random).join("");
 }
 
+// A connection that survived this long is treated as healthy, so that quitting
+// neovim after a real editing session does not eat into the crash-loop budget.
+const NATIVE_STABLE_MS = 60000;
+const NATIVE_MAX_RETRIES = 5;
+
 let nativeConnected = false;
+let nativeConnectedAt = 0;
+let nativeRetries = 0;
 const nvimServer = {};
+
+function setNvimServerInstance(instance) {
+    nvimServer.instance = instance;
+    // connectNative may never be called, keep the rejection from going unhandled.
+    instance.catch(() => {});
+}
+
 function startNative() {
     return new Promise((resolve, reject) => {
         const nm = chrome.runtime.connectNative("surfingkeys");
         const password = generatePassword();
-        nm.onDisconnect.addListener((evt) => {
+        nm.onDisconnect.addListener(() => {
             // read lastError to suppress "Unchecked runtime.lastError"
             void chrome.runtime.lastError;
-            if (nativeConnected) {
-                nvimServer.instance = startNative();
-            } else {
+            if (!nativeConnected) {
                 delete nvimServer.instance;
                 LOG("warn", "Failed to connect neovim, please make sure your neovim version 0.5 or above.");
+            } else {
+                if (Date.now() - nativeConnectedAt > NATIVE_STABLE_MS) {
+                    nativeRetries = 0;
+                }
+                if (nativeRetries < NATIVE_MAX_RETRIES) {
+                    nativeRetries += 1;
+                    // The timer is lost when the service worker is recycled, which is
+                    // fine: waking it up runs this module again and starts over.
+                    setTimeout(() => {
+                        setNvimServerInstance(startNative());
+                    }, Math.min(1000 * Math.pow(2, nativeRetries - 1), 30000));
+                } else {
+                    delete nvimServer.instance;
+                    LOG("warn", `Neovim disconnected ${nativeRetries} times in a row, stopped reconnecting.`);
+                }
             }
+            reject(new Error("Neovim native messaging host disconnected."));
         });
-        nm.onMessage.addListener(async (resp) => {
+        nm.onMessage.addListener((resp) => {
             if (resp.status === true) {
                 nativeConnected = true;
                 if (resp.res.event === "serverStarted") {
+                    nativeConnectedAt = Date.now();
                     const url = `127.0.0.1:${resp.res.port}/${password}`;
                     resolve({url, nm});
                 }
             } else if (resp.err) {
                 LOG("error", resp.err);
+                reject(new Error(String(resp.err)));
             }
         });
         nm.postMessage({
@@ -141,7 +171,7 @@ function startNative() {
         });
     });
 }
-nvimServer.instance = startNative();
+setNvimServerInstance(startNative());
 
 start({
     name: "Chrome",
