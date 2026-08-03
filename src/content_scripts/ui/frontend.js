@@ -569,7 +569,9 @@ const Front = (function() {
                     return;
                 }
                 nvim.connect(resp.url, () => {
-                    nvim.command(`call NewScratch("${message.file_name}", "${encode(message.content)}", "${message.type}")`);
+                    // Pass values through msgpack-rpc rather than concatenating them
+                    // into a VimScript string, so file_name / type cannot inject code.
+                    nvim.callFunction('NewScratch', [message.file_name, encode(message.content), message.type]);
                 });
             });
         });
