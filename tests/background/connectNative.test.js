@@ -32,7 +32,7 @@ describe('connectNative', () => {
     test('responds with the server url and forwards the mode', async () => {
         const nm = { postMessage: jest.fn() };
         const { messageListener } = startWith({
-            instance: Promise.resolve({ url: '127.0.0.1:4242/secret', nm }),
+            ensure: () => Promise.resolve({ url: '127.0.0.1:4242/secret', nm }),
         });
         const sendResponse = jest.fn();
 
@@ -45,7 +45,7 @@ describe('connectNative', () => {
 
     test('responds with a serializable error message when the host failed to start', async () => {
         const { messageListener } = startWith({
-            instance: Promise.reject(new Error('nvim exited before starting the server')),
+            ensure: () => Promise.reject(new Error('nvim exited before starting the server')),
         });
         const sendResponse = jest.fn();
 
@@ -58,5 +58,16 @@ describe('connectNative', () => {
         });
         // An Error instance would serialize to `{}` over chrome.runtime messaging.
         expect(typeof sendResponse.mock.calls[0][0].error).toBe('string');
+    });
+
+    test('does not spawn the native host until connectNative is called', () => {
+        const ensure = jest.fn(() => Promise.resolve({ url: 'x', nm: { postMessage: jest.fn() } }));
+
+        const { messageListener } = startWith({ ensure });
+        // start() finished; nothing should have reached for the host yet.
+        expect(ensure).not.toHaveBeenCalled();
+
+        messageListener({ action: 'connectNative', mode: 'embed' }, null, jest.fn());
+        expect(ensure).toHaveBeenCalledTimes(1);
     });
 });
