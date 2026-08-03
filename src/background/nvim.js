@@ -13,8 +13,12 @@ function generatePassword() {
 // returns the handle Chrome and Firefox pass to start() as `browser.nvimServer`;
 // Safari has no such host and passes none.
 //
-// `instance` (a promise of {url, nm}) is DELETED when the editor is unavailable --
-// its absence is how the rest of the extension knows.
+// The host is launched by the first `ensure()` or `request()`, not at load: an MV3
+// service worker runs this module again on every wake, and each run would spawn a
+// headless neovim even for a user who never opens the editor.
+//
+// `ensure()` returns `instance`, a promise of {url, nm}. It rejects when the host
+// never answers, and the next call tries again.
 //
 // `ready` means the host has answered, and the editor is offered on that: a pending
 // or dropped connection may have no host behind it.
@@ -46,9 +50,12 @@ function createNvimServer() {
     // arrives while `port` is null.
     let lastFailure = "";
 
-    // Resolver of a pending `instance`, so every attempt of one retry run settles
+    // Settlers of a pending `instance`, so every attempt of one retry run settles
     // the SAME promise a caller is already holding.
     let settleInstance = null;
+    let failInstance = null;
+
+    let launched = false;
 
     // An `instance` left resolved across a retry hands out the port that just died,
     // so a pending one takes its place before each attempt.
@@ -56,9 +63,13 @@ function createNvimServer() {
         if (settleInstance) {
             return;
         }
-        nvimServer.instance = new Promise((resolve) => {
+        nvimServer.instance = new Promise((resolve, reject) => {
             settleInstance = resolve;
+            failInstance = reject;
         });
+        // Nothing need be waiting on it, and an unobserved rejection is logged as an
+        // error.
+        nvimServer.instance.catch(() => {});
     }
 
     function rejectPending(reason) {
@@ -130,6 +141,8 @@ function createNvimServer() {
             } else {
                 delete nvimServer.instance;
                 settleInstance = null;
+                launched = false;
+                failInstance(new Error(failure));
                 LOG("warn", "Failed to connect neovim"
                     + (reason ? ": " + reason : "")
                     + ". See src/nvim/server/Readme.md to install the native"
@@ -173,6 +186,7 @@ function createNvimServer() {
     // decide which reason is reported. `signal` releases the entry: one held after
     // the caller gives up can no longer be matched to a reply carrying no id.
     nvimServer.request = function(message, {signal} = {}) {
+        launch();
         return Promise.resolve(reachable).then(() => {
             if (signal && signal.aborted) {
                 throw new Error("the request was abandoned");
@@ -195,8 +209,19 @@ function createNvimServer() {
         });
     };
 
-    armInstance();
-    startNative();
+    function launch() {
+        if (!launched) {
+            launched = true;
+            armInstance();
+            startNative();
+        }
+    }
+
+    nvimServer.ensure = function() {
+        launch();
+        return nvimServer.instance;
+    };
+
     return nvimServer;
 }
 
