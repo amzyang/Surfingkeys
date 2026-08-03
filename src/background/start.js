@@ -821,6 +821,9 @@ function start(browser) {
             });
         }
     };
+    // Fire-and-forget tab actions return {} so that handleMessage answers a
+    // needResponse sender immediately, instead of returning true and leaving
+    // the channel hanging until the service worker is recycled.
     self.focusTabByIndex = function(message, sender, sendResponse) {
         var queryInfo = message.queryInfo || {currentWindow: true};
         chrome.tabs.query(queryInfo, function(tabs) {
@@ -830,6 +833,7 @@ function start(browser) {
                 });
             }
         });
+        return {};
     };
     self.goToLastTab = function(message, sender, sendResponse) {
         if (tabHistory.length > 1) {
@@ -897,9 +901,11 @@ function start(browser) {
     }
     self.nextTab = function(message, sender, sendResponse) {
         _nextTab(sender.tab, message.repeats);
+        return {};
     };
     self.previousTab = function(message, sender, sendResponse) {
         _nextTab(sender.tab, -message.repeats);
+        return {};
     };
     function _roundRepeatTabs(tab, repeats, operation) {
         if (tab) {
@@ -927,6 +933,7 @@ function start(browser) {
                 });
             });
         });
+        return {};
     };
     self.closeTab = function(message, sender, sendResponse) {
         _roundRepeatTabs(sender.tab, message.repeats, function(tabIds) {
@@ -938,6 +945,7 @@ function start(browser) {
                 }
             });
         });
+        return {};
     };
 
     function _closeTab(s, n) {
@@ -948,8 +956,8 @@ function start(browser) {
         });
     };
 
-    self.closeTabLeft  = function(message, sender, senderResponse) { _closeTab(sender, -message.repeats);};
-    self.closeTabRight = function(message, sender, senderResponse) { _closeTab(sender, message.repeats); };
+    self.closeTabLeft  = function(message, sender, senderResponse) { _closeTab(sender, -message.repeats); return {}; };
+    self.closeTabRight = function(message, sender, senderResponse) { _closeTab(sender, message.repeats); return {}; };
     self.closeTabsToLeft = function(message, sender, senderResponse) { _closeTab(sender, -sender.tab.index); };
     self.closeTabsToRight = function(message, sender, senderResponse) {
         chrome.tabs.query({currentWindow: true},
@@ -1546,6 +1554,7 @@ function start(browser) {
                 index: to
             });
         });
+        return {};
     };
     function _quit() {
         chrome.windows.getAll({
@@ -1759,6 +1768,7 @@ function start(browser) {
                 chrome.tabs.setZoom(tabId, zf + zoomFactor);
             });
         }
+        return {};
     };
     function _removeURL(uid, cb) {
         var type = uid[0], uid = uid.substr(1);
