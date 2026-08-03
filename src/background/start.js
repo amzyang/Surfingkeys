@@ -1996,13 +1996,13 @@ function start(browser) {
     chrome.runtime.setUninstallURL("http://brookhong.github.io/2018/01/30/why-did-you-uninstall-surfingkeys.html");
 
     self.connectNative = function (message, sender, sendResponse) {
-        if (!browser.nvimServer || !browser.nvimServer.instance) {
+        if (!browser.nvimServer) {
             _response(message, sendResponse, {
                 error: "Neovim native messaging host is not available."
             });
             return;
         }
-        browser.nvimServer.instance.then(({url, nm}) => {
+        browser.nvimServer.ensure().then(({url, nm}) => {
             nm.postMessage({
                 mode: message.mode
             });

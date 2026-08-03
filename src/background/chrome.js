@@ -6,6 +6,7 @@ import {
     loadRawSettingsFromStorage,
     start
 } from './start.js';
+import { createLazyConnection } from './lazyConnection.js';
 
 function loadRawSettings(keys, cb, defaultSet) {
     loadRawSettingsFromStorage(keys, cb, defaultSet, {useSync: true, dropLocalPath: true});
@@ -108,21 +109,12 @@ function generatePassword() {
     return Array.from(random).join("");
 }
 
-// A connection that survived this long is treated as healthy, so that quitting
-// neovim after a real editing session does not eat into the crash-loop budget.
-const NATIVE_STABLE_MS = 60000;
-const NATIVE_MAX_RETRIES = 5;
-
-let nativeConnected = false;
-let nativeConnectedAt = 0;
-let nativeRetries = 0;
-const nvimServer = {};
-
-function setNvimServerInstance(instance) {
-    nvimServer.instance = instance;
-    // connectNative may never be called, keep the rejection from going unhandled.
-    instance.catch(() => {});
-}
+// The connection to the native host is built lazily and rebuilt on demand, so a
+// recycled MV3 service worker does not re-spawn a headless neovim on every wake —
+// nvim starts only when the editor is actually opened. A dead connection is
+// dropped so the next open reconnects instead of a background retry loop.
+const nvimConnection = createLazyConnection(startNative);
+const nvimServer = { ensure: nvimConnection.ensure };
 
 function startNative() {
     return new Promise((resolve, reject) => {
@@ -131,32 +123,15 @@ function startNative() {
         nm.onDisconnect.addListener(() => {
             // read lastError to suppress "Unchecked runtime.lastError"
             void chrome.runtime.lastError;
-            if (!nativeConnected) {
-                delete nvimServer.instance;
-                LOG("warn", "Failed to connect neovim, please make sure your neovim version 0.5 or above.");
-            } else {
-                if (Date.now() - nativeConnectedAt > NATIVE_STABLE_MS) {
-                    nativeRetries = 0;
-                }
-                if (nativeRetries < NATIVE_MAX_RETRIES) {
-                    nativeRetries += 1;
-                    // The timer is lost when the service worker is recycled, which is
-                    // fine: waking it up runs this module again and starts over.
-                    setTimeout(() => {
-                        setNvimServerInstance(startNative());
-                    }, Math.min(1000 * Math.pow(2, nativeRetries - 1), 30000));
-                } else {
-                    delete nvimServer.instance;
-                    LOG("warn", `Neovim disconnected ${nativeRetries} times in a row, stopped reconnecting.`);
-                }
-            }
+            // Drop the cached connection so the next ensure() reconnects; harmless
+            // if the connect promise already rejected (the cache was cleared then).
+            nvimConnection.invalidate();
+            LOG("warn", "Neovim native messaging host disconnected, please make sure your neovim version is 0.5 or above.");
             reject(new Error("Neovim native messaging host disconnected."));
         });
         nm.onMessage.addListener((resp) => {
             if (resp.status === true) {
-                nativeConnected = true;
                 if (resp.res.event === "serverStarted") {
-                    nativeConnectedAt = Date.now();
                     const url = `127.0.0.1:${resp.res.port}/${password}`;
                     resolve({url, nm});
                 }
@@ -171,7 +146,6 @@ function startNative() {
         });
     });
 }
-setNvimServerInstance(startNative());
 
 start({
     name: "Chrome",
