@@ -519,12 +519,20 @@ const Front = (function() {
         });
     }
     let _neovim = null;
+    // The nvim connection is reused across editor sessions, but the lifecycle
+    // handlers below are bound once and live as long as the connection. Without
+    // this flag a connection that dies while no editor is open (e.g. nvim was
+    // killed after a `:w` left the socket open) would still run quitNvim on a
+    // page with nothing shown, which can pop the "encountered a bug" dialog when
+    // another Front UI happens to be on top of the mode stack.
+    let _nvimEditorOpen = false;
     function renderNvim(message) {
         if (!_neovim) {
             _neovim  = new Promise((resolve, reject) => {
                 import(/* webpackIgnore: true */ './neovim_lib.js').then((nvimlib) => {
                     nvimlib.default(_nvim).then(({nvim, destroy}) => {
                         function quitNvim() {
+                            _nvimEditorOpen = false;
                             normal.enter();
                             destroy();
                             self.hidePopup();
@@ -548,19 +556,26 @@ const Front = (function() {
                         });
                         nvim.on('nvim:close', () => {
                             nvim.off('surfingkeys:rpc', rpc);
-                            quitNvim();
+                            if (_nvimEditorOpen) {
+                                quitNvim();
+                            }
                         });
                         nvim.on('nvim:connection_failed', () => {
-                            abortNvim("Failed to connect to the neovim server.");
+                            if (_nvimEditorOpen) {
+                                abortNvim("Failed to connect to the neovim server.");
+                            }
                         });
                         nvim.on('nvim:decode_error', () => {
-                            abortNvim("Lost sync with the neovim server.");
+                            if (_nvimEditorOpen) {
+                                abortNvim("Lost sync with the neovim server.");
+                            }
                         });
                         resolve({nvim, abortNvim});
                     });
                 });
             });
         }
+        _nvimEditorOpen = true;
         _neovim.then(({nvim, abortNvim}) => {
             normal.exit();
             RUNTIME('connectNative', {mode: "embed"}, (resp) => {
