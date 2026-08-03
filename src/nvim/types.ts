@@ -35,6 +35,11 @@ export type Transport = EventEmitter & {
    * Send message to remote
    */
   send: (channel: string, ...args: Args) => void;
+
+  /**
+   * Drop the underlying connection
+   */
+  close: () => void;
 };
 
 // Manual refine of the auto-generated UiEvents
