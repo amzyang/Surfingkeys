@@ -2405,31 +2405,15 @@ describe('start', () => {
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'connectNative', needResponse: true}, senderFor(12));
             await flushPromises();
-            expect(sendResponse).toHaveBeenCalledWith({error: new Error('no nvim')});
+            // A string: an Error instance serializes to `{}` over runtime messaging.
+            expect(sendResponse).toHaveBeenCalledWith({error: 'no nvim'});
         });
 
-        it('advertises neovim support in the full settings payload', () => {
+        it('leaves useNeovim to the user settings, whatever the state of the host', () => {
             const nvimServer = {ready: true, instance: Promise.resolve({})};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
-            // A boolean, not the promise: a content script receives a promise as a
-            // truthy empty object.
-            expect(sendResponse.mock.calls[0][0].settings.useNeovim).toBe(true);
-        });
-
-        it('reports no neovim support as false, not as absent', () => {
-            const {dispatch} = bootstrap();
-            const {sendResponse} = dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
-            expect(sendResponse.mock.calls[0][0].settings.useNeovim).toBe(false);
-        });
-
-        it('withholds neovim support while the connection is still pending', () => {
-            // A pending connection may have no host behind it, so the doubt goes
-            // against neovim.
-            const nvimServer = {ready: false, instance: new Promise(() => {})};
-            const {dispatch} = bootstrap({browser: {nvimServer}});
-            const {sendResponse} = dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
-            expect(sendResponse.mock.calls[0][0].settings.useNeovim).toBe(false);
+            expect(sendResponse.mock.calls[0][0].settings).not.toHaveProperty('useNeovim');
         });
     });
 

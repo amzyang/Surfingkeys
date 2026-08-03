@@ -8,7 +8,8 @@ const NvimEventEmitter = (EventEmitter as unknown) as { new (): NvimInterface };
 
 class Nvim extends NvimEventEmitter {
     private requestId = 0;
-    private connectedUrl: String;
+    private connectedUrl: string;
+    private transport: Transport | null = null;
 
     private requestPromises: Record<
         string,
@@ -47,7 +48,10 @@ class Nvim extends NvimEventEmitter {
             return;
         }
 
+        this.disconnect();
+
         const transport = new WebSocketTransport (url);
+        this.transport = transport;
 
         transport.on('nvim:data', (params: MessageType) => {
             if (params[0] === 0) {
@@ -69,10 +73,17 @@ class Nvim extends NvimEventEmitter {
         });
         transport.on('nvim:close', () => {
             this.connectedUrl = "";
+            if (this.transport === transport) {
+                this.transport = null;
+            }
+            this.rejectPending();
             this.emit('nvim:close');
         });
         transport.on('nvim:connection_failed', () => {
             this.emit('nvim:connection_failed');
+        });
+        transport.on('nvim:decode_error', (error: any) => {
+            this.emit('nvim:decode_error', error);
         });
 
         (Object.keys(nvimCommandNames) as Array<keyof typeof nvimCommandNames>).forEach(
@@ -83,15 +94,42 @@ class Nvim extends NvimEventEmitter {
         );
     }
 
+    /**
+     * Drops the current connection without emitting `nvim:close`, so that moving to
+     * another url does not read as a shutdown to whoever renders the UI.
+     */
+    private disconnect(): void {
+        const transport = this.transport;
+        if (!transport) {
+            return;
+        }
+        this.transport = null;
+        this.connectedUrl = "";
+        transport.removeAllListeners();
+        transport.close();
+        this.rejectPending();
+    }
+
+    private rejectPending(): void {
+        const pending = Object.values(this.requestPromises);
+        this.requestPromises = {};
+        pending.forEach(({ reject }) => reject(new Error('Neovim connection closed')));
+    }
+
     request<R = void>(transport: Transport, command: string, params: any[] = []): Promise<R> {
         this.requestId += 1;
         transport.send('nvim:write', this.requestId, command, params);
-        return new Promise((resolve, reject) => {
+        const promise = new Promise<R>((resolve, reject) => {
             this.requestPromises[this.requestId] = {
                 resolve,
                 reject,
             };
         });
+        // Most call sites fire and forget, so a closed connection would otherwise
+        // reject a crowd of promises nobody listens to. Callers that do care can
+        // still attach their own handlers to the promise returned here.
+        promise.catch(() => {});
+        return promise;
     }
 
     private handleResponse(id: number, error: Error, result?: any): void {
