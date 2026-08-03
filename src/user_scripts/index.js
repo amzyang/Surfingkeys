@@ -363,7 +363,7 @@ function withChannelScope(onScope, attemptsLeft = CHANNEL_SCOPE_ATTEMPTS) {
     });
 }
 
-export default (extensionRootUrl, uf) => {
+export default (extensionRootUrl, uf, runNow) => {
     EXTENSION_ROOT_URL = extensionRootUrl;
     if (isInUIFrame()) return;
     userScriptTask = () => {
@@ -380,9 +380,16 @@ export default (extensionRootUrl, uf) => {
     // the snippets, which would otherwise map keys onto channels that go nowhere. The
     // content script starts them once it sees this announcement and has its own
     // settings in place.
+    //
+    // runNow covers dynamic injection into sub-frames (about:srcdoc etc.),
+    // where the content script's one-shot runUserScript dispatch has already
+    // fired before this module loaded.
     withChannelScope((scope) => {
         setChannelScope(scope);
         initSKFunctionListener("user", userChannel, true);
         dispatchSKEvent("userScriptListening");
     });
+    if (runNow) {
+        userScriptTask();
+    }
 };
