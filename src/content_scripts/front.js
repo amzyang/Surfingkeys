@@ -15,6 +15,7 @@ import {
 } from './common/utils.js';
 import { RUNTIME, dispatchSKEvent, runtime } from './common/runtime.js';
 import toMarkdown from './common/pageMarkdown.js';
+import { sanitizeNvimBufferName } from './common/nvimBuffer.js';
 import createUiHost from './uiframe.js';
 
 function createFront(insert, normal, hints, visual, browser) {
@@ -338,7 +339,7 @@ function createFront(insert, normal, hints, visual, browser) {
             content: content
         };
         if (useNeovim || runtime.conf.useNeovim) {
-            cmd.file_name = `${new URL(window.location.origin).host}/${elementBehindEditor.nodeName.toLowerCase()}`;
+            cmd.file_name = sanitizeNvimBufferName(`${new URL(window.location.origin).host}/${elementBehindEditor.nodeName.toLowerCase()}`);
         }
         self.command(cmd);
     };
