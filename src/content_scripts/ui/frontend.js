@@ -531,6 +531,10 @@ const Front = (function() {
                             destroy();
                             self.hidePopup();
                         }
+                        function abortNvim(reason) {
+                            quitNvim();
+                            showBanner(reason, 3000);
+                        }
                         function rpc(data) {
                             const [ event, args ] = data;
                             if (event === "WriteData") {
@@ -548,14 +552,24 @@ const Front = (function() {
                             nvim.off('surfingkeys:rpc', rpc);
                             quitNvim();
                         });
-                        resolve(nvim);
+                        nvim.on('nvim:connection_failed', () => {
+                            abortNvim("Failed to connect to the neovim server.");
+                        });
+                        nvim.on('nvim:decode_error', () => {
+                            abortNvim("Lost sync with the neovim server.");
+                        });
+                        resolve({nvim, abortNvim});
                     });
                 });
             });
         }
-        _neovim.then((nvim) => {
+        _neovim.then(({nvim, abortNvim}) => {
             normal.exit();
             RUNTIME('connectNative', {mode: "embed"}, (resp) => {
+                if (resp.error) {
+                    abortNvim(resp.error);
+                    return;
+                }
                 nvim.connect(resp.url, () => {
                     nvim.command(`call NewScratch("${message.file_name}", "${encode(message.content)}", "${message.type}")`);
                 });
