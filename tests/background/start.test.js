@@ -1,6 +1,5 @@
 import {
     _save,
-    dictFromArray,
     extendObject,
     getSubSettings,
     start,
@@ -13,16 +12,6 @@ import {
     mockFetchFailure,
     mockFetchText,
 } from './chromeMock.js';
-
-describe('dictFromArray', () => {
-    it('builds a dict mapping each item to the given value', () => {
-        expect(dictFromArray(['a', 'b', 'c'], 1)).toEqual({a: 1, b: 1, c: 1});
-    });
-
-    it('handles an empty array', () => {
-        expect(dictFromArray([], 'x')).toEqual({});
-    });
-});
 
 describe('extendObject', () => {
     it('copies own enumerable properties from source to target', () => {
@@ -658,22 +647,6 @@ describe('start', () => {
             expect(broadcasts()[0]).toMatchObject({blocklist: {'https://b.example': 1}});
         });
 
-        it('adds then removes an origin from the mouse-select-to-query list', () => {
-            let boot = bootstrap({browser: {settings: {mouseSelectToQuery: []}}});
-            boot.dispatch({action: 'toggleMouseQuery', origin: 'https://b.example'}, senderFor(12));
-            expect(boot.stored()).toMatchObject({mouseSelectToQuery: ['https://b.example']});
-
-            boot = bootstrap({browser: {settings: {mouseSelectToQuery: ['https://b.example']}}});
-            boot.dispatch({action: 'toggleMouseQuery', origin: 'https://b.example'}, senderFor(12));
-            expect(boot.stored()).toMatchObject({mouseSelectToQuery: []});
-        });
-
-        it('ignores a mouse query toggle coming from an extension page', () => {
-            const {chrome, dispatch} = bootstrap({browser: {settings: {mouseSelectToQuery: []}}});
-            const sender = {tab: {id: 5, url: 'chrome-extension://surfingkeys/pages/frontend.html'}, frameId: 0};
-            dispatch({action: 'toggleMouseQuery', origin: 'x'}, sender);
-            expect(chrome.storage.local.set).not.toHaveBeenCalled();
-        });
     });
 
     describe('vim marks', () => {
@@ -737,6 +710,25 @@ describe('start', () => {
             expect(chrome.storage.sync.clear).toHaveBeenCalled();
             expect(browser._applyProxySettings).toHaveBeenCalledTimes(2); // boot + reset
             expect(sendResponse).toHaveBeenCalledWith({settings: expect.objectContaining({proxyMode: 'clear'})});
+        });
+
+        it('rereads storage on reset and drops what a refresh in flight brings back', () => {
+            // Held, so the refresh the boot load starts is still in flight at the reset.
+            let answer;
+            const {browser, dispatch, stored} = bootstrap({
+                browser: {settings: {localPath: '<native>', snippets: 'old copy'}},
+                beforeStart: (chrome) => {
+                    chrome.runtime.sendNativeMessage = jest.fn((id, msg, cb) => {
+                        answer = () => cb({data: 'old file'});
+                    });
+                },
+            });
+            // What storage holds once both areas are cleared.
+            Object.keys(browser.settings).forEach((k) => delete browser.settings[k]);
+            const {sendResponse} = dispatch({action: 'resetSettings', needResponse: true}, senderFor(12));
+            answer();
+            expect(sendResponse.mock.calls[0][0].settings).not.toHaveProperty('snippets');
+            expect(stored()).not.toHaveProperty('snippets');
         });
 
         it('returns a settings subset for a specific key', () => {
@@ -908,6 +900,43 @@ describe('start', () => {
             }));
         });
 
+        it('refreshes the snippets once for the overlapping loads of one page', async () => {
+            const fetchMock = mockFetchText('api.mapkey("a", "b", () => {});');
+            const {dispatch} = bootstrap({browser: {settings: {
+                localPath: 'https://conf.example/sk.js',
+                snippets: 'last copy',
+            }}});
+            await flushPromises();
+            fetchMock.mockClear();
+            // Every frame of a page asks for full settings at once.
+            [11, 12, 13].forEach((tabId) => dispatch({action: 'getSettings', needResponse: true}, senderFor(tabId)));
+            await flushPromises();
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('stops waiting on a snippets refresh that never settles', () => {
+            jest.useFakeTimers();
+            const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+            try {
+                // fetch has no deadline of its own, so this read would hold off every
+                // later refresh for the life of the background.
+                global.fetch = jest.fn(() => new Promise(() => {}));
+                const {dispatch} = bootstrap({browser: {settings: {
+                    localPath: 'https://conf.example/sk.js',
+                    snippets: 'last copy',
+                }}});
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+                dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+                jest.advanceTimersByTime(5000);
+                dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
+                expect(global.fetch).toHaveBeenCalledTimes(2);
+            } finally {
+                logged.mockRestore();
+                jest.useRealTimers();
+            }
+        });
+
         describe('localPath <native>', () => {
             // Answers Settings.read with `reply`. This is the SAFARI shape of the read
             // -- one message to the containing app; with a neovim connection it goes
@@ -921,6 +950,12 @@ describe('start', () => {
                 });
                 return chrome.runtime.sendNativeMessage;
             };
+
+            // An extension page: the snippets are left out of what a web frame gets.
+            const frameOfOptionsPage = (frameId) => ({
+                url: 'chrome-extension://surfingkeys/pages/options.html',
+                frameId,
+            });
 
             it('reads the snippets from the native app instead of fetching', async () => {
                 const fetchMock = mockFetchText('from the network');
@@ -1042,16 +1077,22 @@ describe('start', () => {
                 }));
             });
 
-            it('keeps the cached snippets and names the file when the read fails at boot', async () => {
-                const {browser} = bootstrap({
-                    browser: {settings: {localPath: '<native>', snippets: 'last good copy'}},
-                    beforeStart: (chrome) => mockNativeSettings(chrome, {error: 'No such file'}),
-                });
-                await flushPromises();
-                expect(browser._applyProxySettings).toHaveBeenCalledWith(expect.objectContaining({
-                    snippets: 'last good copy',
-                    error: 'Failed to read snippets from ~/.surfingkeys.js: No such file',
-                }));
+            it('keeps serving the cached snippets and logs the file when the refresh fails at boot', async () => {
+                const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+                try {
+                    const {browser} = bootstrap({
+                        browser: {settings: {localPath: '<native>', snippets: 'last good copy'}},
+                        beforeStart: (chrome) => mockNativeSettings(chrome, {error: 'No such file'}),
+                    });
+                    await flushPromises();
+                    const served = browser._applyProxySettings.mock.calls[0][0];
+                    expect(served.snippets).toBe('last good copy');
+                    expect(served).not.toHaveProperty('error');
+                    expect(logged).toHaveBeenCalledWith(
+                        'Failed to refresh snippets from ~/.surfingkeys.js: No such file');
+                } finally {
+                    logged.mockRestore();
+                }
             });
 
             // Every frame of a page asks for full settings.
@@ -1063,8 +1104,8 @@ describe('start', () => {
                     answer = () => cb({data: 'read once'});
                 });
                 chrome.runtime.sendNativeMessage = native;
-                const responses = [12, 13, 21].map((tabId) => dispatch(
-                    {action: 'getSettings', needResponse: true}, senderFor(tabId)).sendResponse);
+                const responses = [0, 1, 2].map((frameId) => dispatch(
+                    {action: 'getSettings', needResponse: true}, frameOfOptionsPage(frameId)).sendResponse);
                 expect(native).toHaveBeenCalledTimes(1);
                 answer();
                 await flushPromises();
@@ -1083,6 +1124,49 @@ describe('start', () => {
                 await flushPromises();
                 // Sharing a settled read would serve a copy taken before the edit.
                 expect(native).toHaveBeenCalledTimes(2);
+            });
+
+            it('serves an edit to the file from a later page load on', async () => {
+                const {dispatch, stored, chrome} = bootstrap({browser: {settings: {localPath: '<native>'}}});
+                mockNativeSettings(chrome, {data: 'before the edit'});
+                dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
+                await flushPromises();
+                mockNativeSettings(chrome, {data: 'after the edit'});
+                // Still answered from the cache, which the read this load starts refreshes.
+                dispatch({action: 'getSettings', needResponse: true}, senderFor(13));
+                await flushPromises();
+                const {sendResponse} = dispatch(
+                    {action: 'getSettings', needResponse: true}, frameOfOptionsPage(0));
+                await flushPromises();
+                expect(sendResponse.mock.calls[0][0].settings.snippets).toBe('after the edit');
+                expect(stored()).toMatchObject({snippets: 'after the edit'});
+            });
+
+            it('tells the options page a refresh failed, until one succeeds', async () => {
+                const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+                try {
+                    const {dispatch, chrome} = bootstrap({
+                        browser: {settings: {localPath: '<native>', snippets: 'last good copy'}},
+                    });
+                    mockNativeSettings(chrome, {error: 'No such file'});
+                    dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
+                    await flushPromises();
+                    const failed = dispatch({action: 'getSettings', needResponse: true}, frameOfOptionsPage(0));
+                    await flushPromises();
+                    expect(failed.sendResponse.mock.calls[0][0].settings).toMatchObject({
+                        snippets: 'last good copy',
+                        error: 'Failed to refresh snippets from ~/.surfingkeys.js: No such file',
+                    });
+
+                    mockNativeSettings(chrome, {data: 'last good copy'});
+                    dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
+                    await flushPromises();
+                    const recovered = dispatch({action: 'getSettings', needResponse: true}, frameOfOptionsPage(0));
+                    await flushPromises();
+                    expect(recovered.sendResponse.mock.calls[0][0].settings).not.toHaveProperty('error');
+                } finally {
+                    logged.mockRestore();
+                }
             });
 
             it('gives up on a native app that never answers', async () => {
@@ -1164,23 +1248,26 @@ describe('start', () => {
                     expect(chrome.runtime.sendNativeMessage).not.toHaveBeenCalled();
                 });
 
-                it('reports a connection that is not usable and keeps the cached copy', async () => {
-                    const request = jest.fn(() => Promise.reject(new Error('the connection to neovim is not open')));
-                    const {browser, chrome} = bootstrap({
-                        browser: {
-                            settings: {localPath: '<native>', snippets: 'last good copy'},
-                            nvimServer: {ready: false, request},
-                        },
-                    });
-                    await flushPromises();
-                    // Rather than quietly launching a one-off nvim, which puts back
-                    // the churn this connection exists to remove.
-                    expect(chrome.runtime.sendNativeMessage).not.toHaveBeenCalled();
-                    expect(browser._applyProxySettings).toHaveBeenCalledWith(expect.objectContaining({
-                        snippets: 'last good copy',
-                        error: 'Failed to read snippets from ~/.surfingkeys.js: '
-                            + 'the connection to neovim is not open',
-                    }));
+                it('logs a connection that is not usable and keeps the cached copy', async () => {
+                    const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+                    try {
+                        const request = jest.fn(() => Promise.reject(new Error('the connection to neovim is not open')));
+                        const {browser, chrome} = bootstrap({
+                            browser: {
+                                settings: {localPath: '<native>', snippets: 'last good copy'},
+                                nvimServer: {ready: false, request},
+                            },
+                        });
+                        await flushPromises();
+                        // Rather than quietly launching a one-off nvim, which puts back
+                        // the churn this connection exists to remove.
+                        expect(chrome.runtime.sendNativeMessage).not.toHaveBeenCalled();
+                        expect(browser._applyProxySettings.mock.calls[0][0].snippets).toBe('last good copy');
+                        expect(logged).toHaveBeenCalledWith('Failed to refresh snippets from ~/.surfingkeys.js: '
+                            + 'the connection to neovim is not open');
+                    } finally {
+                        logged.mockRestore();
+                    }
                 });
 
                 it('still shares overlapping reads across frames', async () => {
@@ -1189,14 +1276,9 @@ describe('start', () => {
                         answer = () => resolve({status: true, res: {data: 'read once'}});
                     }));
                     const {dispatch} = bootstrap({browser: withConnection(request)});
-                    // Settle the boot-time read before holding one open, or the
-                    // frames below join THAT read and nothing is measured.
-                    await flushPromises();
-                    answer();
-                    await flushPromises();
-                    request.mockClear();
-                    const responses = [12, 13, 21].map((tabId) => dispatch(
-                        {action: 'getSettings', needResponse: true}, senderFor(tabId)).sendResponse);
+                    // The boot-time read is held open, and the frames below join it.
+                    const responses = [0, 1, 2].map((frameId) => dispatch(
+                        {action: 'getSettings', needResponse: true}, frameOfOptionsPage(frameId)).sendResponse);
                     await flushPromises();
                     expect(request).toHaveBeenCalledTimes(1);
                     answer();
@@ -2508,20 +2590,19 @@ describe('start', () => {
             expect(sendResponse).toHaveBeenCalledWith({url: '127.0.0.1:1234/pw'});
         });
 
-        it('reports a native connection failure', async () => {
+        it('reports a native connection failure as a serializable message', async () => {
             const nvimServer = {ensure: () => Promise.reject(new Error('no nvim'))};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'connectNative', needResponse: true}, senderFor(12));
             await flushPromises();
-            // A string: an Error instance serializes to `{}` over runtime messaging.
             expect(sendResponse).toHaveBeenCalledWith({error: 'no nvim'});
         });
 
-        it('leaves useNeovim to the user settings, whatever the state of the host', () => {
-            const nvimServer = {ready: true, ensure: () => Promise.resolve({})};
+        it('does not force useNeovim on merely because the host is present', () => {
+            const nvimServer = {ensure: () => Promise.resolve({})};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
-            expect(sendResponse.mock.calls[0][0].settings).not.toHaveProperty('useNeovim');
+            expect(sendResponse.mock.calls[0][0].settings.useNeovim).toBeFalsy();
         });
     });
 
@@ -2788,7 +2869,7 @@ describe('start', () => {
         it('leaves an already up-to-date user script alone', () => {
             const {chrome, dispatch} = bootstrap();
             chrome.userScripts.getScripts = jest.fn((filter, cb) =>
-                cb([{id: 'settingsSnippets', js: [{code: snippetCode('unchanged')}]}]));
+                cb([{id: 'settingsSnippets', runAt: 'document_start', js: [{code: snippetCode('unchanged')}]}]));
             dispatch({
                 action: 'updateSettings',
                 needResponse: true,
@@ -2854,6 +2935,49 @@ describe('start', () => {
             expect(chrome.userScripts.register).toHaveBeenCalledWith(
                 [expect.objectContaining({js: [{code: snippetCode('api.map("a","b");')}]})],
                 expect.any(Function));
+        });
+
+        it.each([
+            ['rejected', () => Promise.reject(new Error('Cannot access contents of the page'))],
+            ['threw in the page', () => Promise.resolve([{error: 'Cannot access contents of the page'}])],
+        ])('tells the PDF viewer its snippets did not run when the injection %s', async (how, execute) => {
+            const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+            try {
+                const {chrome, dispatch} = bootstrap({
+                    browser: {settings: {showAdvanced: true, snippets: 'api.map("a","b");'}},
+                });
+                chrome.userScripts.execute = jest.fn(execute);
+                dispatch({action: 'getSettings', needResponse: true}, {
+                    tab: {...TABS[1]}, frameId: 0,
+                    url: 'chrome-extension://surfingkeys/pages/pdf_viewer.html?file=a.pdf',
+                });
+                await flushPromises();
+                expect(logged).toHaveBeenCalledWith(expect.stringContaining('settings snippets'), expect.any(Error));
+                expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(12, {
+                    subject: 'showBanner',
+                    message: expect.stringContaining('Cannot access contents of the page'),
+                }, {frameId: 0});
+            } finally {
+                logged.mockRestore();
+            }
+        });
+
+        it('injects an about: frame with the registered code, left to the same handshake', async () => {
+            // The registered script cannot match about:srcdoc, so the frame gets a copy.
+            // A copy that started the snippets itself would run them before its world
+            // has the channel scope, then again once the content script starts them.
+            const {chrome, dispatch} = bootstrap({
+                browser: {settings: {showAdvanced: true, snippets: 'api.map("a","b");'}},
+            });
+            chrome.userScripts.execute = jest.fn(() => Promise.resolve([]));
+            dispatch({action: 'getSettings', needResponse: true},
+                {tab: {...TABS[1]}, frameId: 3, url: 'about:srcdoc'});
+            await flushPromises();
+            expect(chrome.userScripts.execute).toHaveBeenCalledWith({
+                target: {tabId: 12, frameIds: [3]},
+                js: [{code: snippetCode('api.map("a","b");').replace(
+                    "import('./api.js')", "import('chrome-extension://surfingkeys/api.js')")}],
+            });
         });
     });
 
