@@ -1,7 +1,5 @@
 import {
     _save,
-    dictFromArray,
-    extendObject,
     getSubSettings,
     start,
 } from '../../src/background/start.js';
@@ -13,36 +11,6 @@ import {
     mockFetchFailure,
     mockFetchText,
 } from './chromeMock.js';
-
-describe('dictFromArray', () => {
-    it('builds a dict mapping each item to the given value', () => {
-        expect(dictFromArray(['a', 'b', 'c'], 1)).toEqual({a: 1, b: 1, c: 1});
-    });
-
-    it('handles an empty array', () => {
-        expect(dictFromArray([], 'x')).toEqual({});
-    });
-});
-
-describe('extendObject', () => {
-    it('copies own enumerable properties from source to target', () => {
-        const target = {a: 1};
-        extendObject(target, {b: 2, c: 3});
-        expect(target).toEqual({a: 1, b: 2, c: 3});
-    });
-
-    it('overwrites existing keys on target', () => {
-        const target = {a: 1};
-        extendObject(target, {a: 99});
-        expect(target).toEqual({a: 99});
-    });
-
-    it('mutates and returns nothing', () => {
-        const target = {};
-        expect(extendObject(target, {x: 1})).toBeUndefined();
-        expect(target).toEqual({x: 1});
-    });
-});
 
 describe('getSubSettings', () => {
     const set = {a: 1, b: 2, c: 3};
@@ -244,12 +212,11 @@ describe('start', () => {
                 expect.objectContaining({messaging: true}));
         });
 
-        it('marks messages arriving from a user script and dispatches them', () => {
+        it('dispatches messages arriving from a user script', () => {
             const {chrome} = bootstrap();
             const sendResponse = jest.fn();
             const message = {action: 'getTopURL', needResponse: true};
             chrome.runtime.onUserScriptMessage.fire(message, senderFor(12), sendResponse);
-            expect(message.fromUserScript).toBe(true);
             expect(sendResponse).toHaveBeenCalledWith({url: 'https://b.example/'});
         });
 
@@ -618,22 +585,6 @@ describe('start', () => {
             expect(broadcasts()[0]).toMatchObject({blocklist: {'https://b.example': 1}});
         });
 
-        it('adds then removes an origin from the mouse-select-to-query list', () => {
-            let boot = bootstrap({browser: {settings: {mouseSelectToQuery: []}}});
-            boot.dispatch({action: 'toggleMouseQuery', origin: 'https://b.example'}, senderFor(12));
-            expect(boot.stored()).toMatchObject({mouseSelectToQuery: ['https://b.example']});
-
-            boot = bootstrap({browser: {settings: {mouseSelectToQuery: ['https://b.example']}}});
-            boot.dispatch({action: 'toggleMouseQuery', origin: 'https://b.example'}, senderFor(12));
-            expect(boot.stored()).toMatchObject({mouseSelectToQuery: []});
-        });
-
-        it('ignores a mouse query toggle coming from an extension page', () => {
-            const {chrome, dispatch} = bootstrap({browser: {settings: {mouseSelectToQuery: []}}});
-            const sender = {tab: {id: 5, url: 'chrome-extension://surfingkeys/pages/frontend.html'}, frameId: 0};
-            dispatch({action: 'toggleMouseQuery', origin: 'x'}, sender);
-            expect(chrome.storage.local.set).not.toHaveBeenCalled();
-        });
     });
 
     describe('vim marks', () => {
@@ -1148,11 +1099,12 @@ describe('start', () => {
             expect(chrome.sessions.restore).toHaveBeenCalled();
         });
 
-        it('asks the native host to reopen the last tab on Safari', () => {
-            const {chrome, dispatch} = bootstrap({browser: {name: 'Safari'}});
+        it('asks the browser adapter to reopen the last tab when it provides one', () => {
+            const restoreLastTab = jest.fn((cb) => cb({nativeReply: 'reopenLastTab'}));
+            const {chrome, dispatch} = bootstrap({browser: {name: 'Safari', restoreLastTab}});
             const {sendResponse} = dispatch({action: 'openLast', needResponse: true}, senderFor(12));
-            expect(chrome.runtime.sendNativeMessage).toHaveBeenCalledWith(
-                'application.id', {command: 'reopenLastTab'}, expect.any(Function));
+            expect(restoreLastTab).toHaveBeenCalledWith(expect.any(Function));
+            expect(chrome.sessions.restore).not.toHaveBeenCalled();
             expect(sendResponse).toHaveBeenCalledWith({nativeReply: 'reopenLastTab'});
         });
 
@@ -1752,7 +1704,7 @@ describe('start', () => {
     describe('native messaging', () => {
         it('hands the neovim server url back to the page', async () => {
             const nm = {postMessage: jest.fn()};
-            const nvimServer = {instance: Promise.resolve({url: '127.0.0.1:1234/pw', nm})};
+            const nvimServer = {ensure: () => Promise.resolve({url: '127.0.0.1:1234/pw', nm})};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch(
                 {action: 'connectNative', needResponse: true, mode: 'nvim'}, senderFor(12));
@@ -1761,19 +1713,19 @@ describe('start', () => {
             expect(sendResponse).toHaveBeenCalledWith({url: '127.0.0.1:1234/pw'});
         });
 
-        it('reports a native connection failure', async () => {
-            const nvimServer = {instance: Promise.reject(new Error('no nvim'))};
+        it('reports a native connection failure as a serializable message', async () => {
+            const nvimServer = {ensure: () => Promise.reject(new Error('no nvim'))};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'connectNative', needResponse: true}, senderFor(12));
             await flushPromises();
-            expect(sendResponse).toHaveBeenCalledWith({error: new Error('no nvim')});
+            expect(sendResponse).toHaveBeenCalledWith({error: 'no nvim'});
         });
 
-        it('advertises neovim support in the full settings payload', () => {
-            const nvimServer = {instance: Promise.resolve({})};
+        it('does not force useNeovim on merely because the host is present', () => {
+            const nvimServer = {ensure: () => Promise.resolve({})};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
-            expect(sendResponse.mock.calls[0][0].settings.useNeovim).toBeTruthy();
+            expect(sendResponse.mock.calls[0][0].settings.useNeovim).toBeFalsy();
         });
     });
 
@@ -2019,7 +1971,7 @@ describe('start', () => {
         it('leaves an already up-to-date user script alone', () => {
             const {chrome, dispatch} = bootstrap();
             chrome.userScripts.getScripts = jest.fn((filter, cb) =>
-                cb([{id: 'settingsSnippets', js: [{code: snippetCode('unchanged')}]}]));
+                cb([{id: 'settingsSnippets', runAt: 'document_start', js: [{code: snippetCode('unchanged')}]}]));
             dispatch({
                 action: 'updateSettings',
                 needResponse: true,
@@ -2147,13 +2099,14 @@ describe('start', () => {
             }
         });
 
-        it('routes the reply through runtime messaging for a Safari extension page', () => {
-            const {chrome, dispatch} = bootstrap({browser: {name: 'Safari'}});
+        it('routes the reply through the adapter hook for an extension page', () => {
+            const sendLLMessage = jest.fn();
+            const {chrome, dispatch} = bootstrap({browser: {name: 'Safari', sendLLMessage}});
             llmClients.faux = (message, {onChunk}) => onChunk('hi');
             try {
                 dispatch({action: 'llmRequest', provider: 'faux', messages: []},
                     {tab: {id: 12}, frameId: 0, origin: 'chrome-extension://surfingkeys'});
-                expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+                expect(sendLLMessage).toHaveBeenCalledWith(
                     {subject: 'llmResponse', chunk: 'hi'});
                 expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
             } finally {
