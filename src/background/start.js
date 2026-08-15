@@ -2795,7 +2795,9 @@ function start(browser) {
 }
 
 export {
+    _save,
     extendObject,
+    getSubSettings,
     loadRawSettingsFromStorage,
     start
 };

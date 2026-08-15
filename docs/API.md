@@ -684,7 +684,7 @@ Check whether an element is in viewport.
 *   `el` **[Element][117]** the element to be checked.
 *   `ignoreSize` **[boolean][111]** whether to ignore size of the element, otherwise the element must be with size 4\*4. (optional, default `false`)
 
-Returns **[boolean][111]** 
+Returns **[boolean][111]**
 
 ## getLargeElements
 
