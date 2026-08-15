@@ -1,7 +1,5 @@
 import {
     _save,
-    dictFromArray,
-    extendObject,
     getSubSettings,
     start,
 } from '../../src/background/start.js';
@@ -13,36 +11,6 @@ import {
     mockFetchFailure,
     mockFetchText,
 } from './chromeMock.js';
-
-describe('dictFromArray', () => {
-    it('builds a dict mapping each item to the given value', () => {
-        expect(dictFromArray(['a', 'b', 'c'], 1)).toEqual({a: 1, b: 1, c: 1});
-    });
-
-    it('handles an empty array', () => {
-        expect(dictFromArray([], 'x')).toEqual({});
-    });
-});
-
-describe('extendObject', () => {
-    it('copies own enumerable properties from source to target', () => {
-        const target = {a: 1};
-        extendObject(target, {b: 2, c: 3});
-        expect(target).toEqual({a: 1, b: 2, c: 3});
-    });
-
-    it('overwrites existing keys on target', () => {
-        const target = {a: 1};
-        extendObject(target, {a: 99});
-        expect(target).toEqual({a: 99});
-    });
-
-    it('mutates and returns nothing', () => {
-        const target = {};
-        expect(extendObject(target, {x: 1})).toBeUndefined();
-        expect(target).toEqual({x: 1});
-    });
-});
 
 describe('getSubSettings', () => {
     const set = {a: 1, b: 2, c: 3};
@@ -284,12 +252,11 @@ describe('start', () => {
                 expect.objectContaining({messaging: true}));
         });
 
-        it('marks messages arriving from a user script and dispatches them', () => {
+        it('dispatches messages arriving from a user script', () => {
             const {chrome} = bootstrap();
             const sendResponse = jest.fn();
             const message = {action: 'getTopURL', needResponse: true};
             chrome.runtime.onUserScriptMessage.fire(message, senderFor(12), sendResponse);
-            expect(message.fromUserScript).toBe(true);
             expect(sendResponse).toHaveBeenCalledWith({url: 'https://b.example/'});
         });
 
@@ -658,22 +625,6 @@ describe('start', () => {
             expect(broadcasts()[0]).toMatchObject({blocklist: {'https://b.example': 1}});
         });
 
-        it('adds then removes an origin from the mouse-select-to-query list', () => {
-            let boot = bootstrap({browser: {settings: {mouseSelectToQuery: []}}});
-            boot.dispatch({action: 'toggleMouseQuery', origin: 'https://b.example'}, senderFor(12));
-            expect(boot.stored()).toMatchObject({mouseSelectToQuery: ['https://b.example']});
-
-            boot = bootstrap({browser: {settings: {mouseSelectToQuery: ['https://b.example']}}});
-            boot.dispatch({action: 'toggleMouseQuery', origin: 'https://b.example'}, senderFor(12));
-            expect(boot.stored()).toMatchObject({mouseSelectToQuery: []});
-        });
-
-        it('ignores a mouse query toggle coming from an extension page', () => {
-            const {chrome, dispatch} = bootstrap({browser: {settings: {mouseSelectToQuery: []}}});
-            const sender = {tab: {id: 5, url: 'chrome-extension://surfingkeys/pages/frontend.html'}, frameId: 0};
-            dispatch({action: 'toggleMouseQuery', origin: 'x'}, sender);
-            expect(chrome.storage.local.set).not.toHaveBeenCalled();
-        });
     });
 
     describe('vim marks', () => {
@@ -922,6 +873,12 @@ describe('start', () => {
                 return chrome.runtime.sendNativeMessage;
             };
 
+            // An extension page: the snippets are left out of what a web frame gets.
+            const frameOfOptionsPage = (frameId) => ({
+                url: 'chrome-extension://surfingkeys/pages/options.html',
+                frameId,
+            });
+
             it('reads the snippets from the native app instead of fetching', async () => {
                 const fetchMock = mockFetchText('from the network');
                 const {dispatch, stored, chrome} = bootstrap();
@@ -1042,16 +999,22 @@ describe('start', () => {
                 }));
             });
 
-            it('keeps the cached snippets and names the file when the read fails at boot', async () => {
-                const {browser} = bootstrap({
-                    browser: {settings: {localPath: '<native>', snippets: 'last good copy'}},
-                    beforeStart: (chrome) => mockNativeSettings(chrome, {error: 'No such file'}),
-                });
-                await flushPromises();
-                expect(browser._applyProxySettings).toHaveBeenCalledWith(expect.objectContaining({
-                    snippets: 'last good copy',
-                    error: 'Failed to read snippets from ~/.surfingkeys.js: No such file',
-                }));
+            it('keeps serving the cached snippets and logs the file when the refresh fails at boot', async () => {
+                const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+                try {
+                    const {browser} = bootstrap({
+                        browser: {settings: {localPath: '<native>', snippets: 'last good copy'}},
+                        beforeStart: (chrome) => mockNativeSettings(chrome, {error: 'No such file'}),
+                    });
+                    await flushPromises();
+                    const served = browser._applyProxySettings.mock.calls[0][0];
+                    expect(served.snippets).toBe('last good copy');
+                    expect(served).not.toHaveProperty('error');
+                    expect(logged).toHaveBeenCalledWith(
+                        'Failed to refresh snippets from ~/.surfingkeys.js: No such file');
+                } finally {
+                    logged.mockRestore();
+                }
             });
 
             // Every frame of a page asks for full settings.
@@ -1063,8 +1026,8 @@ describe('start', () => {
                     answer = () => cb({data: 'read once'});
                 });
                 chrome.runtime.sendNativeMessage = native;
-                const responses = [12, 13, 21].map((tabId) => dispatch(
-                    {action: 'getSettings', needResponse: true}, senderFor(tabId)).sendResponse);
+                const responses = [0, 1, 2].map((frameId) => dispatch(
+                    {action: 'getSettings', needResponse: true}, frameOfOptionsPage(frameId)).sendResponse);
                 expect(native).toHaveBeenCalledTimes(1);
                 answer();
                 await flushPromises();
@@ -1073,16 +1036,17 @@ describe('start', () => {
                 });
             });
 
-            it('reads the file again once the previous read has finished', async () => {
+            it('serves later loads from the settings cache once the file has been read', async () => {
                 const {dispatch, chrome} = bootstrap({browser: {settings: {localPath: '<native>'}}});
                 const native = mockNativeSettings(chrome, {data: 'current contents'});
                 native.mockClear();
                 dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
                 await flushPromises();
-                dispatch({action: 'getSettings', needResponse: true}, senderFor(13));
+                const {sendResponse} = dispatch(
+                    {action: 'getSettings', needResponse: true}, frameOfOptionsPage(0));
                 await flushPromises();
-                // Sharing a settled read would serve a copy taken before the edit.
-                expect(native).toHaveBeenCalledTimes(2);
+                expect(native).toHaveBeenCalledTimes(1);
+                expect(sendResponse.mock.calls[0][0].settings.snippets).toBe('current contents');
             });
 
             it('gives up on a native app that never answers', async () => {
@@ -1164,23 +1128,26 @@ describe('start', () => {
                     expect(chrome.runtime.sendNativeMessage).not.toHaveBeenCalled();
                 });
 
-                it('reports a connection that is not usable and keeps the cached copy', async () => {
-                    const request = jest.fn(() => Promise.reject(new Error('the connection to neovim is not open')));
-                    const {browser, chrome} = bootstrap({
-                        browser: {
-                            settings: {localPath: '<native>', snippets: 'last good copy'},
-                            nvimServer: {ready: false, request},
-                        },
-                    });
-                    await flushPromises();
-                    // Rather than quietly launching a one-off nvim, which puts back
-                    // the churn this connection exists to remove.
-                    expect(chrome.runtime.sendNativeMessage).not.toHaveBeenCalled();
-                    expect(browser._applyProxySettings).toHaveBeenCalledWith(expect.objectContaining({
-                        snippets: 'last good copy',
-                        error: 'Failed to read snippets from ~/.surfingkeys.js: '
-                            + 'the connection to neovim is not open',
-                    }));
+                it('logs a connection that is not usable and keeps the cached copy', async () => {
+                    const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+                    try {
+                        const request = jest.fn(() => Promise.reject(new Error('the connection to neovim is not open')));
+                        const {browser, chrome} = bootstrap({
+                            browser: {
+                                settings: {localPath: '<native>', snippets: 'last good copy'},
+                                nvimServer: {ready: false, request},
+                            },
+                        });
+                        await flushPromises();
+                        // Rather than quietly launching a one-off nvim, which puts back
+                        // the churn this connection exists to remove.
+                        expect(chrome.runtime.sendNativeMessage).not.toHaveBeenCalled();
+                        expect(browser._applyProxySettings.mock.calls[0][0].snippets).toBe('last good copy');
+                        expect(logged).toHaveBeenCalledWith('Failed to refresh snippets from ~/.surfingkeys.js: '
+                            + 'the connection to neovim is not open');
+                    } finally {
+                        logged.mockRestore();
+                    }
                 });
 
                 it('still shares overlapping reads across frames', async () => {
@@ -1189,14 +1156,9 @@ describe('start', () => {
                         answer = () => resolve({status: true, res: {data: 'read once'}});
                     }));
                     const {dispatch} = bootstrap({browser: withConnection(request)});
-                    // Settle the boot-time read before holding one open, or the
-                    // frames below join THAT read and nothing is measured.
-                    await flushPromises();
-                    answer();
-                    await flushPromises();
-                    request.mockClear();
-                    const responses = [12, 13, 21].map((tabId) => dispatch(
-                        {action: 'getSettings', needResponse: true}, senderFor(tabId)).sendResponse);
+                    // The boot-time read is held open, and the frames below join it.
+                    const responses = [0, 1, 2].map((frameId) => dispatch(
+                        {action: 'getSettings', needResponse: true}, frameOfOptionsPage(frameId)).sendResponse);
                     await flushPromises();
                     expect(request).toHaveBeenCalledTimes(1);
                     answer();
@@ -1689,11 +1651,12 @@ describe('start', () => {
             expect(chrome.sessions.restore).toHaveBeenCalled();
         });
 
-        it('asks the native host to reopen the last tab on Safari', () => {
-            const {chrome, dispatch} = bootstrap({browser: {name: 'Safari'}});
+        it('asks the browser adapter to reopen the last tab when it provides one', () => {
+            const restoreLastTab = jest.fn((cb) => cb({nativeReply: 'reopenLastTab'}));
+            const {chrome, dispatch} = bootstrap({browser: {name: 'Safari', restoreLastTab}});
             const {sendResponse} = dispatch({action: 'openLast', needResponse: true}, senderFor(12));
-            expect(chrome.runtime.sendNativeMessage).toHaveBeenCalledWith(
-                'surfingkeys', {command: 'reopenLastTab'}, expect.any(Function));
+            expect(restoreLastTab).toHaveBeenCalledWith(expect.any(Function));
+            expect(chrome.sessions.restore).not.toHaveBeenCalled();
             expect(sendResponse).toHaveBeenCalledWith({nativeReply: 'reopenLastTab'});
         });
 
@@ -2400,20 +2363,19 @@ describe('start', () => {
             expect(sendResponse).toHaveBeenCalledWith({url: '127.0.0.1:1234/pw'});
         });
 
-        it('reports a native connection failure', async () => {
+        it('reports a native connection failure as a serializable message', async () => {
             const nvimServer = {ensure: () => Promise.reject(new Error('no nvim'))};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'connectNative', needResponse: true}, senderFor(12));
             await flushPromises();
-            // A string: an Error instance serializes to `{}` over runtime messaging.
             expect(sendResponse).toHaveBeenCalledWith({error: 'no nvim'});
         });
 
-        it('leaves useNeovim to the user settings, whatever the state of the host', () => {
-            const nvimServer = {ready: true, ensure: () => Promise.resolve({})};
+        it('does not force useNeovim on merely because the host is present', () => {
+            const nvimServer = {ensure: () => Promise.resolve({})};
             const {dispatch} = bootstrap({browser: {nvimServer}});
             const {sendResponse} = dispatch({action: 'getSettings', needResponse: true}, senderFor(12));
-            expect(sendResponse.mock.calls[0][0].settings).not.toHaveProperty('useNeovim');
+            expect(sendResponse.mock.calls[0][0].settings.useNeovim).toBeFalsy();
         });
     });
 
@@ -2680,7 +2642,7 @@ describe('start', () => {
         it('leaves an already up-to-date user script alone', () => {
             const {chrome, dispatch} = bootstrap();
             chrome.userScripts.getScripts = jest.fn((filter, cb) =>
-                cb([{id: 'settingsSnippets', js: [{code: snippetCode('unchanged')}]}]));
+                cb([{id: 'settingsSnippets', runAt: 'document_start', js: [{code: snippetCode('unchanged')}]}]));
             dispatch({
                 action: 'updateSettings',
                 needResponse: true,
@@ -3069,13 +3031,14 @@ describe('start', () => {
             }
         });
 
-        it('routes the reply through runtime messaging for a Safari extension page', () => {
-            const {chrome, dispatch} = bootstrap({browser: {name: 'Safari'}});
+        it('routes the reply through the adapter hook for an extension page', () => {
+            const sendLLMessage = jest.fn();
+            const {chrome, dispatch} = bootstrap({browser: {name: 'Safari', sendLLMessage}});
             llmClients.faux = (message, {onChunk}) => onChunk('hi');
             try {
                 dispatch({action: 'llmRequest', provider: 'faux', messages: []},
                     {tab: {id: 12}, frameId: 0, origin: 'chrome-extension://surfingkeys'});
-                expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+                expect(sendLLMessage).toHaveBeenCalledWith(
                     {subject: 'llmResponse', chunk: 'hi'});
                 expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
             } finally {

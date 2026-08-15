@@ -2621,6 +2621,8 @@ function start(browser) {
 }
 
 export {
+    _save,
+    getSubSettings,
     loadRawSettingsFromStorage,
     start
 };

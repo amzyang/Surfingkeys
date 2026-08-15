@@ -78,6 +78,7 @@
     "pdfjs-dist": "4.8.69"
   },
   "allowScripts": {
-    "canvas@3.2.3": true
+    "canvas@3.2.1": true,
+    "unrs-resolver@1.12.2": true
   }
 }
