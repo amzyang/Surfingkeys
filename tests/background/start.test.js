@@ -1730,17 +1730,90 @@ describe('start', () => {
     });
 
     describe('toolbar icon', () => {
+        // Stand-ins for the decode pipeline behind setIcon({imageData});
+        // jsdom has neither createImageBitmap nor OffscreenCanvas.
+        beforeEach(() => {
+            global.fetch = jest.fn();
+            global.createImageBitmap = jest.fn(() => Promise.resolve({width: 48, height: 48}));
+            global.OffscreenCanvas = jest.fn(function () {
+                this.getContext = () => ({drawImage: jest.fn(), getImageData: () => 'decoded-image-data'});
+            });
+        });
+
         it.each([
             ['disabled', 'icons/48-x.png'],
             ['lurking', 'icons/48-l.png'],
             ['enabled', 'icons/48.png'],
-        ])('uses the %s icon', (status, path) => {
+        ])('decodes the embedded %s icon without fetching', async (status, iconPath) => {
             const {chrome, dispatch} = bootstrap();
             dispatch({action: 'setSurfingkeysIcon', status}, senderFor(12));
-            expect(chrome.action.setIcon).toHaveBeenCalledWith({path, tabId: 12});
+            await flushPromises();
+            expect(global.fetch).not.toHaveBeenCalled();
+            // the embedded base64 must stay in sync with the shipped png
+            // (jsdom's Blob has no arrayBuffer(), hence the FileReader)
+            const blob = global.createImageBitmap.mock.calls[0][0];
+            const embedded = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(Buffer.from(reader.result));
+                reader.readAsArrayBuffer(blob);
+            });
+            const onDisk = require('fs').readFileSync(
+                require('path').resolve(__dirname, '../../src', iconPath));
+            expect(embedded.equals(onDisk)).toBe(true);
+            expect(chrome.action.setIcon).toHaveBeenCalledWith(
+                {imageData: 'decoded-image-data', tabId: 12});
         });
 
-        it('uses the MV2 browserAction API when not running MV3', () => {
+        it('decodes an icon once and reuses the ImageData across tabs', async () => {
+            const {chrome, dispatch} = bootstrap();
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(11));
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            await flushPromises();
+            expect(global.createImageBitmap).toHaveBeenCalledTimes(1);
+            expect(chrome.action.setIcon).toHaveBeenCalledTimes(2);
+        });
+
+        it('skips setIcon when a tab reports the status it already shows', async () => {
+            const {chrome, dispatch} = bootstrap();
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            await flushPromises();
+            expect(chrome.action.setIcon).toHaveBeenCalledTimes(1);
+            dispatch({action: 'setSurfingkeysIcon', status: 'enabled'}, senderFor(12));
+            await flushPromises();
+            expect(chrome.action.setIcon).toHaveBeenCalledTimes(2);
+        });
+
+        it('sets the icon again after the tab navigates', async () => {
+            const {chrome, dispatch} = bootstrap();
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            // the browser resets a tab-specific icon on navigation
+            chrome.tabs.onUpdated.fire(12, {status: 'loading'}, TABS[1]);
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            await flushPromises();
+            expect(chrome.action.setIcon).toHaveBeenCalledTimes(2);
+        });
+
+        it('forgets the icon status of a removed tab', async () => {
+            const {chrome, dispatch} = bootstrap();
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            chrome.tabs.onRemoved.fire(12);
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            await flushPromises();
+            expect(chrome.action.setIcon).toHaveBeenCalledTimes(2);
+        });
+
+        it('always sets the icon for callers without a tab, like the popup', async () => {
+            const {chrome, dispatch} = bootstrap();
+            dispatch({action: 'setSurfingkeysIcon', status: 'enabled'}, {});
+            dispatch({action: 'setSurfingkeysIcon', status: 'enabled'}, {});
+            await flushPromises();
+            expect(chrome.action.setIcon).toHaveBeenCalledTimes(2);
+            expect(chrome.action.setIcon).toHaveBeenCalledWith(
+                {imageData: 'decoded-image-data', tabId: undefined});
+        });
+
+        it('uses the MV2 browserAction API with a path when not running MV3', () => {
             const {chrome, dispatch} = bootstrap({chrome: {manifestVersion: 2}});
             dispatch({action: 'setSurfingkeysIcon', status: 'enabled'}, senderFor(12));
             expect(chrome.browserAction.setIcon).toHaveBeenCalledWith(
