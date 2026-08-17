@@ -685,7 +685,10 @@ function start(browser) {
         }
     }
     chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
-        if (changeInfo.status === "complete") {
+        if (changeInfo.status === "loading") {
+            // the browser resets a tab-specific icon on navigation
+            delete tabIconStatus[tabId];
+        } else if (changeInfo.status === "complete") {
             if (tab.active) {
                 _tabActivated(tabId);
             }
