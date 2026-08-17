@@ -2645,6 +2645,15 @@ describe('start', () => {
             dispatch({action: 'setSurfingkeysIcon', status: 'enabled'}, senderFor(12));
             expect(chrome.action.setIcon).toHaveBeenCalledTimes(2);
         });
+
+        it('sets the icon again after the tab navigates', () => {
+            const {chrome, dispatch} = bootstrap();
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            // the browser resets a tab-specific icon on navigation
+            chrome.tabs.onUpdated.fire(12, {status: 'loading'}, TABS[1]);
+            dispatch({action: 'setSurfingkeysIcon', status: 'disabled'}, senderFor(12));
+            expect(chrome.action.setIcon).toHaveBeenCalledTimes(2);
+        });
     });
 
     describe('boot-time snippet loading', () => {
