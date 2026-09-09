@@ -1,4 +1,5 @@
 import {
+    MAIN_WORLD_TARGET_ATTR,
     filterByTitleOrUrl,
 } from '../common/utils.js';
 import llmClients from './llm.js';
@@ -1549,6 +1550,47 @@ function start(browser) {
             js: [{code}]
         }).catch(() => {});
     }
+
+    // Runs snippet-supplied code in the page's MAIN world, where page globals
+    // live. Only userScripts.execute accepts a code string for that world:
+    // scripting.executeScript takes func/files, and the service worker CSP
+    // rules out rebuilding a function from source here. DOM nodes cannot cross
+    // worlds, so the caller tags its element with a one-shot attribute and the
+    // wrapper looks it up again (open shadow roots included) before the call.
+    self.runInMainWorld = function(message, sender, sendResponse) {
+        if (!isUserScriptsAvailable() || !chrome.userScripts.execute) {
+            return {error: "runInMainWorld requires Chrome 135+ with User Scripts allowed for Surfingkeys."};
+        }
+        const marker = JSON.stringify(message.marker || "");
+        const code = `(() => {
+            const marker = ${marker};
+            const sel = '[${MAIN_WORLD_TARGET_ATTR}="' + marker + '"]';
+            const find = (root) => {
+                const hit = root.querySelector(sel);
+                if (hit) return hit;
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) {
+                        const inner = find(el.shadowRoot);
+                        if (inner) return inner;
+                    }
+                }
+                return null;
+            };
+            const target = marker ? find(document) : undefined;
+            if (target) target.removeAttribute('${MAIN_WORLD_TARGET_ATTR}');
+            return (${message.code})(target);
+        })()`;
+        chrome.userScripts.execute({
+            target: {tabId: sender.tab.id, frameIds: [sender.frameId]},
+            world: "MAIN",
+            js: [{code}]
+        }).then((results) => {
+            const r = results[0];
+            _response(message, sendResponse, r.error ? {error: r.error} : {result: r.result});
+        }).catch((e) => {
+            _response(message, sendResponse, {error: e.message});
+        });
+    };
 
     // session-restored tabs whose navigation committed before Chrome finished
     // restoring the persisted userScripts registration miss the document_start

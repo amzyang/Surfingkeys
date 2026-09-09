@@ -33,8 +33,13 @@ function filterByTitleOrUrl(urls, query, caseSensitive) {
     return urls;
 }
 
+// Tags the element a runInMainWorld caller hands over; the MAIN world
+// injection locates it by this attribute since DOM nodes cannot cross worlds.
+const MAIN_WORLD_TARGET_ATTR = "data-surfingkeys-main-world-target";
+
 export {
     LOG,
+    MAIN_WORLD_TARGET_ATTR,
     filterByTitleOrUrl,
     regexFromString,
 }

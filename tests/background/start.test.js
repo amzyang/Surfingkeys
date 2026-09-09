@@ -2900,4 +2900,63 @@ describe('start', () => {
             expect(llmReplies(chrome)).toHaveLength(1);
         });
     });
+    describe('runInMainWorld', () => {
+        const runMessage = (code, marker) => runtimeMessage('runInMainWorld', {code, marker}, true);
+
+        it('injects the code into the sender frame in the MAIN world', () => {
+            const {chrome, dispatch} = bootstrap();
+            chrome.userScripts.execute = jest.fn(() => Promise.resolve([{result: undefined}]));
+            const {kept} = dispatch(runMessage('(el) => el.tagName', 'tok1'), senderFor(12));
+            expect(kept).toBe(true);
+            expect(chrome.userScripts.execute).toHaveBeenCalledWith(expect.objectContaining({
+                target: {tabId: 12, frameIds: [0]},
+                world: 'MAIN',
+            }));
+            const code = chrome.userScripts.execute.mock.calls[0][0].js[0].code;
+            expect(code).toContain('(el) => el.tagName');
+            expect(code).toContain('data-surfingkeys-main-world-target');
+            expect(code).toContain('tok1');
+        });
+
+        it('forwards the injection result', async () => {
+            const {chrome, dispatch} = bootstrap();
+            chrome.userScripts.execute = jest.fn(() => Promise.resolve([{result: true}]));
+            const {sendResponse} = dispatch(runMessage('() => true', ''), senderFor(12));
+            await flushPromises();
+            expect(sendResponse).toHaveBeenCalledWith({result: true});
+        });
+
+        it('forwards a script error reported by the injection', async () => {
+            const {chrome, dispatch} = bootstrap();
+            chrome.userScripts.execute = jest.fn(() => Promise.resolve([{error: 'boom'}]));
+            const {sendResponse} = dispatch(runMessage('() => { throw 1; }', ''), senderFor(12));
+            await flushPromises();
+            expect(sendResponse).toHaveBeenCalledWith({error: 'boom'});
+        });
+
+        it('forwards a rejected injection as an error', async () => {
+            const {chrome, dispatch} = bootstrap();
+            chrome.userScripts.execute = jest.fn(() => Promise.reject(new Error('no frame')));
+            const {sendResponse} = dispatch(runMessage('() => 1', ''), senderFor(12));
+            await flushPromises();
+            expect(sendResponse).toHaveBeenCalledWith({error: 'no frame'});
+        });
+
+        it('answers with an error when userScripts.execute is unavailable', () => {
+            const {chrome, dispatch} = bootstrap();
+            delete chrome.userScripts.execute;
+            const {kept, sendResponse} = dispatch(runMessage('() => 1', ''), senderFor(12));
+            expect(kept).toBe(false);
+            expect(sendResponse).toHaveBeenCalledWith({error: expect.stringContaining('Chrome 135')});
+        });
+
+        it('is reachable from the user script world', async () => {
+            const {chrome} = bootstrap();
+            chrome.userScripts.execute = jest.fn(() => Promise.resolve([{result: 'on'}]));
+            const sendResponse = jest.fn();
+            chrome.runtime.onUserScriptMessage.fire(runMessage('() => "on"', ''), senderFor(12), sendResponse);
+            await flushPromises();
+            expect(sendResponse).toHaveBeenCalledWith({result: 'on'});
+        });
+    });
 });

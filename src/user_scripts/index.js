@@ -8,6 +8,7 @@ import {
     httpRequest,
     initSKFunctionListener,
     isElementPartiallyInViewport,
+    runInMainWorld,
     showBanner,
     showPopup,
     tabOpenLink,
@@ -201,6 +202,7 @@ const api = {
     searchSelectedWith: (se, onlyThisSite, interactive, alias) => {
         dispatchSKEvent('api', ['searchSelectedWith', se, onlyThisSite, interactive, alias]);
     },
+    runInMainWorld,
     tabOpenLink,
     Clipboard: {
         write: (text) => {
