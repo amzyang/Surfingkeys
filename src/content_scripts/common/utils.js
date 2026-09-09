@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import KeyboardUtils from './keyboardUtils';
 import { RUNTIME, dispatchSKEvent, runtime } from './runtime.js';
+import { MAIN_WORLD_TARGET_ATTR } from '../../common/utils.js';
 
 const colors = [
     '#4169E1', // Royal Blue
@@ -340,6 +341,47 @@ function initSKFunctionListener(name, interfaces, capture) {
     }, opts);
 
     return callbacks;
+}
+
+/**
+ * Run a function in the page's MAIN world, where page globals such as `window.__REACT_GRAB__` live.
+ * Snippets and content scripts run in isolated worlds and cannot read them; this bridges the gap.
+ * Requires Chrome 135+ with User Scripts allowed for Surfingkeys; rejects on other browsers.
+ *
+ * @param {function} fn an arrow function or function expression, called as `fn(element)` in the page. It is serialized with `toString()`, so it must be self-contained (no closure variables). Its return value (or the value its Promise settles to) is resolved back to the caller and must be JSON-serializable.
+ * @param {HTMLElement} [element] a DOM element to hand to `fn`, e.g. the one chosen through `Hints.create`. It is located again in the MAIN world through a temporary `data-surfingkeys-main-world-target` attribute; open shadow roots are searched, closed ones are not.
+ * @returns {Promise} resolved with the value returned by `fn`, rejected with an Error when the API is unavailable or `fn` threw.
+ *
+ * @example
+ * mapkey('cG', 'Toggle react-grab picker', function() {
+ *     runInMainWorld(() => {
+ *         const grab = window.__REACT_GRAB__;
+ *         if (!grab) return false;
+ *         grab.toggle();
+ *         return grab.isActive();
+ *     }).then((active) => Front.showBanner(active ? "picker on" : "picker off"));
+ * });
+ */
+function runInMainWorld(fn, element) {
+    return new Promise((resolve, reject) => {
+        let marker = "";
+        if (element) {
+            marker = generateQuickGuid();
+            element.setAttribute(MAIN_WORLD_TARGET_ATTR, marker);
+        }
+        RUNTIME("runInMainWorld", {code: fn.toString(), marker}, (resp) => {
+            if (element) {
+                element.removeAttribute(MAIN_WORLD_TARGET_ATTR);
+            }
+            if (!resp) {
+                reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : "runInMainWorld: no response"));
+            } else if (resp.error) {
+                reject(new Error(resp.error));
+            } else {
+                resolve(resp.result);
+            }
+        });
+    });
 }
 
 function dispatchMouseEvent(element, events, modifiers) {
@@ -1198,6 +1240,7 @@ export {
     refreshHints,
     reportIssue,
     rotateInput,
+    runInMainWorld,
     safeDecodeURI,
     safeDecodeURIComponent,
     scrollIntoViewIfNeeded,
