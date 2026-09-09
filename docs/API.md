@@ -108,6 +108,9 @@
 *   [tabOpenLink][104]
     *   [Parameters][105]
     *   [Examples][106]
+*   [runInMainWorld][118]
+    *   [Parameters][119]
+    *   [Examples][120]
 
 ## mapkey
 
@@ -740,6 +743,33 @@ Open links in new tabs.
 tabOpenLink('https://github.com/brookhong/Surfingkeys')
 ```
 
+## runInMainWorld
+
+Run a function in the page's MAIN world, where page globals such as `window.__REACT_GRAB__` live.
+Snippets and content scripts run in isolated worlds and cannot read them; this bridges the gap.
+Requires Chrome 135+ with User Scripts allowed for Surfingkeys; rejects on other browsers.
+
+### Parameters
+
+*   `fn` **[function][108]** an arrow function or function expression, called as `fn(element)` in the page. It is serialized with `toString()`, so it must be self-contained (no closure variables). Its return value (or the value its Promise settles to) is resolved back to the caller and must be JSON-serializable.
+*   `element` **[HTMLElement][117]?** a DOM element to hand to `fn`, e.g. the one chosen through `Hints.create`. It is located again in the MAIN world through a temporary `data-surfingkeys-main-world-target` attribute; open shadow roots are searched, closed ones are not.
+
+### Examples
+
+```javascript
+mapkey('cG', 'Toggle react-grab picker', function() {
+    runInMainWorld(() => {
+        const grab = window.__REACT_GRAB__;
+        if (!grab) return false;
+        grab.toggle();
+        return grab.isActive();
+    }).then((active) => Front.showBanner(active ? "picker on" : "picker off"));
+});
+```
+
+Returns **[Promise][113]** resolved with the value returned by `fn`, rejected with an Error when the API is unavailable or `fn` threw.
+
+
 [1]: #mapkey
 
 [2]: #parameters
@@ -973,3 +1003,9 @@ tabOpenLink('https://github.com/brookhong/Surfingkeys')
 [116]: https://github.com/ajaxorg/ace/blob/ec450c03b51aba3724cf90bb133708078d1f3de6/lib/ace/keyboard/vim.js#L927-L1099
 
 [117]: https://developer.mozilla.org/docs/Web/API/Element
+
+[118]: #runinmainworld
+
+[119]: #parameters-39
+
+[120]: #examples-26

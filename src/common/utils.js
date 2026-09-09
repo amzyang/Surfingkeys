@@ -44,8 +44,13 @@ const NATIVE_LOCAL_PATH = "<native>";
 // routes to its containing app, so a wrong name is only noticed off Safari.
 const NATIVE_HOST_NAME = "surfingkeys";
 
+// Tags the element a runInMainWorld caller hands over; the MAIN world
+// injection locates it by this attribute since DOM nodes cannot cross worlds.
+const MAIN_WORLD_TARGET_ATTR = "data-surfingkeys-main-world-target";
+
 export {
     LOG,
+    MAIN_WORLD_TARGET_ATTR,
     NATIVE_HOST_NAME,
     NATIVE_LOCAL_PATH,
     filterByTitleOrUrl,
