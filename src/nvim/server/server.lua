@@ -6,10 +6,10 @@ local function to_16_bits_str(number)
     string.char(bit.band(number, 255))
 end
 
--- Returns a number representing the 2 first characters of the argument string
-local function to_16_bits_number(str)
-    return bit.lshift(string.byte(str, 1), 8) +
-    string.byte(str, 2)
+-- Returns a number representing the 2 characters of str starting at offset
+local function to_16_bits_number(str, offset)
+    return bit.lshift(string.byte(str, offset), 8) +
+    string.byte(str, offset + 1)
 end
 
 -- Returns a 4-characters string the bits of which represent the argument
@@ -20,12 +20,12 @@ local function to_32_bits_str(number)
     string.char(bit.band(number, 255))
 end
 
--- Returns a number representing the 4 first characters of the argument string
-local function to_32_bits_number(str)
-    return bit.lshift(string.byte(str, 1), 24) +
-    bit.lshift(string.byte(str, 2), 16) +
-    bit.lshift(string.byte(str, 3), 8) +
-    string.byte(str, 4)
+-- Returns a number representing the 4 characters of str starting at offset
+local function to_32_bits_number(str, offset)
+    return bit.lshift(string.byte(str, offset), 24) +
+    bit.lshift(string.byte(str, offset + 1), 16) +
+    bit.lshift(string.byte(str, offset + 2), 8) +
+    string.byte(str, offset + 3)
 end
 
 -- Returns a 4-characters string the bits of which represent the argument
@@ -35,16 +35,10 @@ local function to_64_bits_str(number)
     to_32_bits_str(number % 0xFFFFFFFF)
 end
 
--- Returns a number representing the 8 first characters of the argument string
--- Returns incorrect results on numbers larger than 2^48
-local function to_64_bits_number(str)
-    return bit.lshift(string.byte(str, 2), 48) +
-    bit.lshift(string.byte(str, 3), 40) +
-    bit.lshift(string.byte(str, 4), 32) +
-    bit.lshift(string.byte(str, 5), 24) +
-    bit.lshift(string.byte(str, 6), 16) +
-    bit.lshift(string.byte(str, 7), 8) +
-    string.byte(str, 8)
+-- Returns a number representing the 8 characters of str starting at offset
+-- Only the low 4 bytes are read: payloads >= 2^32 are not supported
+local function to_64_bits_number(str, offset)
+    return to_32_bits_number(str, offset + 4)
 end
 
 -- Algorithm described in https://tools.ietf.org/html/rfc3174
@@ -69,15 +63,11 @@ local function sha1(val)
 
     -- For each block
     for M = 0, string.len(padded_message) - 1, 64  do
-        local block = string.sub(padded_message, M + 1)
         local words = {}
         -- Initialize 16 first words
         local i = 0
         for W = 1, 64, 4 do
-            words[i] = to_32_bits_number(string.sub(
-            block,
-            W
-            ))
+            words[i] = to_32_bits_number(padded_message, M + W)
             i = i + 1
         end
 
@@ -227,7 +217,7 @@ local function decode_frame()
                 frame = frame .. coroutine.yield(nil)
             end
 
-            result.payload_length = to_16_bits_number(string.sub(frame, current_byte))
+            result.payload_length = to_16_bits_number(frame, current_byte)
             current_byte = current_byte + 2
         elseif result.payload_length == 127 then
             -- Payload length is on the next eight bytes, make sure
@@ -235,7 +225,7 @@ local function decode_frame()
             while (string.len(frame) < current_byte + 8) do
                 frame = frame .. coroutine.yield(nil)
             end
-            result.payload_length = to_64_bits_number(string.sub(frame, current_byte))
+            result.payload_length = to_64_bits_number(frame, current_byte)
             print("Warning: payload length on 64 bits. Estimated:" .. result.payload_length)
             current_byte = current_byte + 8
         end
@@ -244,19 +234,20 @@ local function decode_frame()
             frame = frame .. coroutine.yield(nil)
         end
 
-        result.masking_key = string.sub(frame, current_byte, current_byte + 4)
+        local mask = { string.byte(frame, current_byte, current_byte + 3) }
         current_byte = current_byte + 4
 
-        result.payload = ""
         local payload_end = current_byte + result.payload_length - 1
+        local decoded = {}
         local j = 1
         for i = current_byte, payload_end do
-            result.payload = result.payload .. string.char(bit.bxor(
+            decoded[i - current_byte + 1] = string.char(bit.bxor(
             string.byte(frame, i),
-            string.byte(result.masking_key, j)
+            mask[j]
             ))
             j = (j % 4) + 1
         end
+        result.payload = table.concat(decoded)
         current_byte = payload_end + 1
         if result.opcode == opcodes.close then
             logw("exit decode: " .. frame .. "\n")
