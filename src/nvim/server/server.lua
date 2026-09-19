@@ -253,7 +253,8 @@ local function decode_frame()
             current_byte = current_byte + 8
         end
 
-        while string.len(frame) < current_byte + result.payload_length do
+        -- The 4-byte masking key sits between the length and the payload
+        while string.len(frame) < current_byte + 3 + result.payload_length do
             frame = frame .. coroutine.yield(nil)
         end
 
