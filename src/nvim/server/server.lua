@@ -548,6 +548,10 @@ function! SurfingkeysNotify(event, ...)
     call rpcnotify(0, 'surfingkeys:rpc', a:event, a:000)
 endfunction
 
+" What an url/input scratch hides, as it was when the host started. The options are
+" global and the host outlives every editor, so the other scratches put them back.
+let s:ui = [&laststatus, &ruler, &showcmd, &showmode, &showmatch, &number, &relativenumber]
+
 function! NewScratch(fn, content, type)
     exec 'tabnew surfingkeys://'.a:fn
     setlocal bufhidden=wipe nobuflisted noswapfile
@@ -563,6 +567,8 @@ function! NewScratch(fn, content, type)
         set noruler noshowcmd noshowmode noshowmatch
         set nonumber
         set norelativenumber
+    else
+        let [&laststatus, &ruler, &showcmd, &showmode, &showmatch, &number, &relativenumber] = s:ui
     endif
 endfunction
 
