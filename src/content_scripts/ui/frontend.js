@@ -542,12 +542,20 @@ const Front = (function() {
                             showBanner(reason, 3000);
                         }
                         function rpc(data) {
+                            // SurfingkeysNotify broadcasts to every connection, so pages
+                            // whose editor is already closed receive it too, and must not
+                            // save or close anything.
+                            if (!_nvimEditorOpen) {
+                                return;
+                            }
                             const [ event, args ] = data;
                             if (event === "WriteData") {
                                 self.contentCommand({
                                     action: 'ace_editor_saved',
                                     data: args[0].join("\r")
                                 });
+                                quitNvim();
+                            } else if (event === "Quit") {
                                 quitNvim();
                             }
                         }

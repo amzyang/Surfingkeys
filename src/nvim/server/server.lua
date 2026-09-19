@@ -558,7 +558,7 @@ function! NewScratch(fn, content, type)
     tabonly
     let @v = v:lua.vim.base64.decode(a:content)
     normal ggdG"vgP
-    nnoremap <buffer> <silent> <Esc> :q<Cr>
+    nnoremap <buffer> <silent> <Esc> :call SurfingkeysQuit()<CR>
     nnoremap <buffer> <silent> <Enter> :w<Cr>
     set nomodified
     if a:type == 'url' || a:type == 'input'
@@ -570,6 +570,17 @@ function! NewScratch(fn, content, type)
     else
         let [&laststatus, &ruler, &showcmd, &showmode, &showmatch, &number, &relativenumber] = s:ui
     endif
+endfunction
+
+" Closing the editor must not `:q`: the scratch is the only window, so that would quit
+" the host every editor shares, and the next editor would wait for the browser to
+" relaunch it. A modified scratch still refuses to close, as `:q` did.
+function! SurfingkeysQuit()
+    if &modified
+        echohl ErrorMsg | echomsg 'E37: No write since last change' | echohl None
+        return
+    endif
+    call SurfingkeysNotify("Quit")
 endfunction
 
 function! SurfingkeysWrite()
