@@ -1,36 +1,5 @@
 -- Part of this file comes from https://github.com/glacambre/firenvim
 
-local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' -- You will need this for encoding/decoding
--- encoding
-function base64_enc(data)
-    return ((data:gsub('.', function(x) 
-        local r,b='',x:byte()
-        for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
-        return r;
-    end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
-        if (#x < 6) then return '' end
-        local c=0
-        for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
-        return b:sub(c+1,c+1)
-    end)..({ '', '==', '=' })[#data%3+1])
-end
-
--- decoding
-function base64_dec(data)
-    data = string.gsub(data, '[^'..b..'=]', '')
-    return (data:gsub('.', function(x)
-        if (x == '=') then return '' end
-        local r,f='',(b:find(x)-1)
-        for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0') end
-        return r;
-    end):gsub('%d%d%d?%d?%d?%d?%d?%d?', function(x)
-        if (#x ~= 8) then return '' end
-        local c=0
-        for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0) end
-            return string.char(c)
-    end))
-end
-
 -- Returns a 2-characters string the bits of which represent the argument
 local function to_16_bits_str(number)
     return string.char(bit.band(bit.rshift(number, 8), 255)) ..
@@ -214,7 +183,7 @@ local function parse_headers()
 end
 
 local function compute_key(key)
-    return base64_enc(sha1(key .. "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+    return vim.base64.encode(sha1(key .. "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 end
 
 -- The server's opening handshake is described here: https://tools.ietf.org/html/rfc6455#section-4.2.2
@@ -517,14 +486,14 @@ end
 -- whose handling THROWS still carries it.
 local function respond_to(chan, text)
     logw("stdin: " .. text .. "\n")
-    local decoded, req = pcall(vim.fn.json_decode, text)
+    local decoded, req = pcall(vim.json.decode, text)
     local status, res
     if decoded then
         status, res = pcall(handle_input, chan, req)
     else
         status, res = false, req
     end
-    local resp = vim.fn.json_encode({
+    local resp = vim.json.encode({
         status = status,
         res = res,
         id = decoded and type(req) == "table" and req['id'] or nil
@@ -634,7 +603,7 @@ function! NewScratch(fn, content, type)
     exec 'tabnew surfingkeys://'.a:fn
     setlocal bufhidden=wipe nobuflisted noswapfile
     tabonly
-    let @v = v:lua.base64_dec(a:content)
+    let @v = v:lua.vim.base64.decode(a:content)
     normal ggdG"vgP
     nnoremap <buffer> <silent> <Esc> :q<Cr>
     nnoremap <buffer> <silent> <Enter> :w<Cr>
