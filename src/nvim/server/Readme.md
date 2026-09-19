@@ -6,6 +6,8 @@ This native messaging host serves two features:
   directory itself. Safari has the Surfingkeys app for this and needs none of the
   setup below.
 
+`server.lua` needs Neovim 0.10 or above.
+
 ## Installation under Windows
 
 **Note: Please update the paths when creating those files, in below instructions, I'm putting those files under `C:\Users\brook\.Surfingkeys_NativeMessagingHosts\` and `nvim.exe` under `d:\tools\Neovim\bin\`.**
