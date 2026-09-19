@@ -639,12 +639,10 @@ function! NewScratch(fn, content, type)
     nnoremap <buffer> <silent> <Esc> :q<Cr>
     nnoremap <buffer> <silent> <Enter> :w<Cr>
     set nomodified
-    if a:type == 'url'
-        inoremap <silent> <CR> <Esc>:w<CR>
-        set nonumber
-        set norelativenumber
-    elseif a:type == 'input'
-        inoremap <silent> <CR> <Esc>:w<CR>
+    if a:type == 'url' || a:type == 'input'
+        inoremap <buffer> <silent> <CR> <Esc>:w<CR>
+        set laststatus=0
+        set noruler noshowcmd noshowmode noshowmatch
         set nonumber
         set norelativenumber
     endif
