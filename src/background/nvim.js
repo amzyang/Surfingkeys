@@ -146,7 +146,7 @@ function createNvimServer() {
                 LOG("warn", "Failed to connect neovim"
                     + (reason ? ": " + reason : "")
                     + ". See src/nvim/server/Readme.md to install the native"
-                    + " messaging host; neovim must be 0.5 or above.");
+                    + " messaging host; neovim must be 0.10 or above.");
             }
         });
         nm.onMessage.addListener(async (resp) => {
