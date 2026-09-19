@@ -1,5 +1,38 @@
 -- Part of this file comes from https://github.com/glacambre/firenvim
 
+local home_dir = os.getenv("HOME") or os.getenv("USERPROFILE")
+
+-- Logging is opt-in: it records every message in both directions, and a host is
+-- long-lived. The switch is a FILE because the host inherits the browser's
+-- environment, and a browser launched from the Dock has nothing to set.
+--
+-- One file per pid, since several hosts can run at once and sharing one name
+-- interleaves their lines. Truncating keeps a recycled pid from appending onto a dead
+-- one's log.
+local function open_log()
+    local marker = io.open(home_dir .. "/.surfingkeys.log.on", "r")
+    if marker == nil then
+        return nil
+    end
+    marker:close()
+    local f = io.open(home_dir .. "/.surfingkeys." .. vim.fn.getpid() .. ".log", "w")
+    if f ~= nil then
+        f:setvbuf("no")
+    end
+    return f
+end
+
+local log = open_log()
+
+-- Every log site goes through this, including those in the stdin handler and the
+-- socket callbacks: a bare log:write there would throw while logging is off, and
+-- turning the log off has to quiet the host, not stop it answering.
+local function logw(msg)
+    if log ~= nil then
+        log:write(msg)
+    end
+end
+
 -- Returns a 2-characters string the bits of which represent the argument
 local function to_16_bits_str(number)
     return string.char(bit.band(bit.rshift(number, 8), 255)) ..
@@ -28,11 +61,10 @@ local function to_32_bits_number(str, offset)
     string.byte(str, offset + 3)
 end
 
--- Returns a 4-characters string the bits of which represent the argument
--- Returns incorrect results on numbers larger than 2^32
+-- Returns an 8-characters string the bits of which represent the argument
+-- Only supports numbers < 2^32: the high 4 bytes are always zero
 local function to_64_bits_str(number)
-    return string.char(0) .. string.char(0) .. string.char(0) .. string.char(0) ..
-    to_32_bits_str(number % 0xFFFFFFFF)
+    return string.rep(string.char(0), 4) .. to_32_bits_str(number)
 end
 
 -- Returns a number representing the 8 characters of str starting at offset
@@ -153,23 +185,18 @@ local function parse_headers()
     local headerstring = ""
     -- Accumulate header lines until we have them all
     while headerend == nil do
-        headerstring = headerstring .. coroutine.yield(nil, nil, nil)
+        headerstring = headerstring .. coroutine.yield(nil, nil)
         headerend = string.find(headerstring, "\r?\n\r?\n")
     end
 
     -- request is the first line of any HTTP request: 'GET /file HTTP/1.1'
     local request = string.sub(headerstring, 1, string.find(headerstring, "\n"))
-    -- rest is any data that might follow the actual HTTP request
-    -- (GET+key/values). If I understand the spec correctly, it should be
-    -- empty.
-    local rest = string.sub(headerstring, headerend + 2)
-
     local keyvalues = string.sub(headerstring, string.len(request))
     local headerobj = {}
     for key, value in string.gmatch(keyvalues, "([^:]+) *: *([^\r\n]+)\r?\n") do
         headerobj[key] = value
     end
-    return request, headerobj, rest
+    return request, headerobj
 end
 
 local function compute_key(key)
@@ -200,13 +227,9 @@ local function decode_frame()
         end
 
         result.fin = bit.band(bit.rshift(string.byte(frame, current_byte), 7), 1) == 1
-        result.rsv1 = bit.band(bit.rshift(string.byte(frame, current_byte), 6), 1) == 1
-        result.rsv2 = bit.band(bit.rshift(string.byte(frame, current_byte), 5), 1) == 1
-        result.rsv3 = bit.band(bit.rshift(string.byte(frame, current_byte), 4), 1) == 1
         result.opcode = bit.band(string.byte(frame, current_byte), 15)
         current_byte = current_byte + 1
 
-        result.mask = bit.rshift(string.byte(frame, current_byte), 7) == 1
         result.payload_length = bit.band(string.byte(frame, current_byte), 127)
         current_byte = current_byte + 1
 
@@ -226,7 +249,7 @@ local function decode_frame()
                 frame = frame .. coroutine.yield(nil)
             end
             result.payload_length = to_64_bits_number(frame, current_byte)
-            print("Warning: payload length on 64 bits. Estimated:" .. result.payload_length)
+            logw("Warning: payload length on 64 bits. Estimated:" .. result.payload_length .. "\n")
             current_byte = current_byte + 8
         end
 
@@ -250,7 +273,6 @@ local function decode_frame()
         result.payload = table.concat(decoded)
         current_byte = payload_end + 1
         if result.opcode == opcodes.close then
-            logw("exit decode: " .. frame .. "\n")
             return result
         else
             frame = string.sub(frame, current_byte) .. coroutine.yield(result)
@@ -267,30 +289,21 @@ local function encode_frame(data)
     -- RSV{1,2,3}: 0
     -- Opcode: 2 (binary frame)
     local header = string.char(130)
+    local n = string.len(data)
     local len
-    if string.len(data) < 126 then
-        len = string.char(string.len(data))
-    elseif string.len(data) < 65536 then
-        len = string.char(126) .. to_16_bits_str(string.len(data))
+    if n < 126 then
+        len = string.char(n)
+    elseif n < 65536 then
+        len = string.char(126) .. to_16_bits_str(n)
     else
-        len = string.char(127) .. to_64_bits_str(string.len(data))
+        len = string.char(127) .. to_64_bits_str(n)
     end
     return  header .. len .. data
 end
 
 local function close_frame()
-    local frame = encode_frame("")
-    return string.char(136) .. string.sub(frame, 2)
-end
-
-local function close_server(server)
-    vim.loop.close(server)
-    -- Work around https://github.com/glacambre/firenvim/issues/49 Note:
-    -- important to do this before nvim_command("qall") because it breaks
-    -- vim.loop.new_timer():start(1000, 100, (function() os.exit() end))
-    -- vim.schedule(function()
-        -- vim.api.nvim_command("qall!")
-    -- end)
+    -- 136: FIN + close opcode, followed by a 0 payload length
+    return string.char(136, 0)
 end
 
 local function connection_handler(server, sock, token)
@@ -299,7 +312,7 @@ local function connection_handler(server, sock, token)
     -- https://neovim.io/doc/user/eval.html#v%3Aservername
     local self_addr = vim.v.servername
     if self_addr == nil then
-            self_addr = os.getenv("NVIM_LISTEN_ADDRESS")
+        self_addr = os.getenv("NVIM_LISTEN_ADDRESS")
     end
     vim.loop.pipe_connect(pipe, self_addr, function(err)
         assert(not err, err)
@@ -339,18 +352,13 @@ local function connection_handler(server, sock, token)
                 -- hasn't been made from a webextension
                 -- context: abort.
                 sock:close()
-                logw("close_server 2\n")
-                close_server(server)
+                server:close()
                 return
             end
             sock:write(accept_connection(headers))
             pipe:read_start(function(error, v)
                 assert(not error, error)
                 if v then
-                    local status, res = pcall(vim.fn.msgpackparse, {v})
-                    -- logw("\n======out========\n")
-                    -- logw(v)
-                    -- logw("\n=================\n")
                     sock:write(encode_frame(v))
                 end
             end)
@@ -361,9 +369,6 @@ local function connection_handler(server, sock, token)
             if decoded_frame.opcode == opcodes.binary then
                 current_payload = current_payload .. decoded_frame.payload
                 if decoded_frame.fin then
-                    -- logw("\n=======in========\n")
-                    -- logw(current_payload)
-                    -- logw("\n=================\n")
                     pipe:write(current_payload)
                     current_payload = ""
                 end
@@ -372,13 +377,9 @@ local function connection_handler(server, sock, token)
                 -- sock:write(pong_frame(decoded_frame))
                 return
             elseif decoded_frame.opcode == opcodes.close and vim.g.server_token == nil then
-                sock:write(close_frame(decoded_frame))
+                sock:write(close_frame())
                 sock:close()
                 pipe:close()
-                logw("close_server 3\n")
-                -- close_server(server)
-                logw("header_parser: " .. coroutine.status(header_parser) .. "\n")
-                logw("frame_decoder: " .. coroutine.status(frame_decoder) .. "\n")
                 return
             end
             _, decoded_frame = coroutine.resume(frame_decoder, "")
@@ -386,7 +387,6 @@ local function connection_handler(server, sock, token)
     end
 end
 
-current_server_port = 0
 local function start_server(token, port)
     vim.api.nvim_command("doautocmd GUIEnter")
     local server = vim.loop.new_tcp()
@@ -399,17 +399,16 @@ local function start_server(token, port)
         server:accept(sock)
         sock:read_start(connection_handler(server, sock, token))
     end)
-    current_server_port = server:getsockname().port
     return {
         event = "serverStarted",
-        port = current_server_port
+        port = server:getsockname().port
     }
 end
 
-function write_stdout(id, data)
+local function write_stdout(id, data)
     -- The native messaging protocol expects the message's length
     -- to precede the message. It has to use native endianness. We
-    -- assume big endian.
+    -- assume little endian.
     -- https://developer.chrome.com/docs/apps/nativeMessaging/#native-messaging-host-protocol
     --
     -- The payload is CONCATENATED onto the header rather than unpacked with
@@ -419,14 +418,14 @@ function write_stdout(id, data)
     local lenstr = string.char(bit.band(len, 255),
     bit.band(bit.rshift(len, 8), 255),
     bit.band(bit.rshift(len, 16), 255),
-    bit.band(bit.rshift(len, 24), 255)) .. data
+    bit.band(bit.rshift(len, 24), 255))
 
-    vim.api.nvim_chan_send(id, lenstr)
+    vim.api.nvim_chan_send(id, lenstr .. data)
 end
 
 -- Read when `localPath` is `<native>`. Reports why a read failed, so the path and
 -- the host can be told apart.
-function read_settings()
+local function read_settings()
     local path = home_dir .. "/.surfingkeys.js"
     local f, err = io.open(path, "r")
     if f == nil then
@@ -472,6 +471,18 @@ local function take_message()
     return text
 end
 
+local function handle_input(data)
+    if data['startServer'] and data['password'] then
+        return start_server(data['password'], 0)
+    elseif data['mode'] then
+        return {
+            mode = data['mode']
+        }
+    elseif data['command'] == 'Settings.read' then
+        return read_settings()
+    end
+end
+
 -- Handles one whole message and writes its reply. The id tells the extension which
 -- request a reply answers, and is read separately from handling so that a request
 -- whose handling THROWS still carries it.
@@ -480,7 +491,7 @@ local function respond_to(chan, text)
     local decoded, req = pcall(vim.json.decode, text)
     local status, res
     if decoded then
-        status, res = pcall(handle_input, chan, req)
+        status, res = pcall(handle_input, req)
     else
         status, res = false, req
     end
@@ -503,66 +514,16 @@ local function respond_to(chan, text)
     end
 end
 
-function handle_input(id, data)
-    if data['startServer'] and data['password'] then
-        vim.g.surfingkeys_standalone = data['standalone']
-        return start_server(data['password'], 0)
-    elseif data['mode'] then
-        vim.fn['SetSurfingkeysStandAlone'](data['mode'])
-        return {
-            mode = data['mode']
-        }
-    elseif data['command'] == 'Settings.read' then
-        return read_settings()
-    end
-end
-
-home_dir = os.getenv("HOME")
-if home_dir == nil then
-    home_dir = os.getenv("USERPROFILE")
-end
--- Logging is opt-in: it records every message in both directions, and a host is
--- long-lived. The switch is a FILE because the host inherits the browser's
--- environment, and a browser launched from the Dock has nothing to set.
---
--- One file per pid, since several hosts can run at once and sharing one name
--- interleaves their lines. Truncating keeps a recycled pid from appending onto a dead
--- one's log.
-local function open_log()
-    local marker = io.open(home_dir .. "/.surfingkeys.log.on", "r")
-    if marker == nil then
-        return nil
-    end
-    marker:close()
-    local f = io.open(home_dir .. "/.surfingkeys." .. vim.fn.getpid() .. ".log", "w")
-    if f ~= nil then
-        f:setvbuf("no")
-    end
-    return f
-end
-
-log = open_log()
-
--- Every log site goes through this, including those in the stdin handler and the
--- socket callbacks: a bare log:write there would throw while logging is off, and
--- turning the log off has to quiet the host, not stop it answering.
-function logw(msg)
-    if log ~= nil then
-        log:write(msg)
-    end
-end
-
-surfingkeys_server_id = 0
 if (vim.g ~= nil and vim.g.server_token ~= nil) then
     print("start server...")
     print(start_server(vim.g.server_token, vim.g.server_port))
 elseif vim.fn ~= nil then
-    surfingkeys_server_id = vim.fn.stdioopen({
-        on_stdin = function(id, data, event)
+    vim.fn.stdioopen({
+        on_stdin = function(id, data)
             -- The stream closing arrives as a single empty string. Checked explicitly,
             -- since "nothing decoded" also describes a split length header.
             if #data == 1 and data[1] == "" then
-                logw("qall: " .. tostring(current_server_port) .. "\n")
+                logw("stdin closed, quitting\n")
                 vim.api.nvim_command('qall!')
                 return
             end
@@ -579,10 +540,6 @@ elseif vim.fn ~= nil then
     })
 else
     vim.api.nvim_command('quit')
-end
-
-function _G.surfingkeys_notify(event)
-    vim.fn.rpcnotify(0, 'surfingkeys:rpc', event)
 end
 
 vim.api.nvim_exec([[
@@ -608,9 +565,6 @@ function! NewScratch(fn, content, type)
     endif
 endfunction
 
-function! SetSurfingkeysStandAlone(v)
-endfunction
-
 function! SurfingkeysWrite()
     call SurfingkeysNotify("WriteData", getbufline('%', 0, '$'))
     set nomodified
@@ -620,6 +574,4 @@ au BufWriteCmd surfingkeys://* call SurfingkeysWrite()
 nnoremap <silent> <M-i> :call SurfingkeysNotify("Enter")<CR>
 nnoremap <silent> <Space>E :call SurfingkeysNotify("Enter", "E")<CR>
 nnoremap <silent> <Space>R :call SurfingkeysNotify("Enter", "R")<CR>
-" nnoremap <silent> <M-i> :call v:lua.surfingkeys_notify("Enter")<CR>
-
 ]], false)
