@@ -357,8 +357,11 @@ local function connection_handler(server, sock, token)
     return function(err, chunk)
         assert(not err, err)
         if not chunk then
-            logw("close_server 1\n")
-            return close_server()
+            -- The editor went away without a close frame. Only this connection
+            -- ends: one host serves every editor, and the next one needs the server.
+            sock:close()
+            pipe:close()
+            return
         end
         local _
         if not headers then
