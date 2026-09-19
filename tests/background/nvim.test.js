@@ -229,6 +229,38 @@ describe('createNvimServer', () => {
             expect(nvimServer.ready).toBe(true);
         });
 
+        // A host that had been up a while died of something done in the editor (`:q`
+        // quits it), not of starting up, and the next editor must not wait for it.
+        it('relaunches at once a host that had been up a while', () => {
+            const nvimServer = launchNvimServer();
+            port.start();
+            jest.advanceTimersByTime(1000);
+            const replacement = createPortStub();
+            chrome.runtime.connectNative.mockImplementation(() => replacement);
+            port.drop({message: 'Native host has exited.'});
+            jest.advanceTimersByTime(0);
+            expect(chrome.runtime.connectNative).toHaveBeenCalledTimes(2);
+            replacement.start();
+            expect(nvimServer.ready).toBe(true);
+        });
+
+        it('waits before relaunching a replacement that dies as it starts', () => {
+            launchNvimServer();
+            port.start();
+            jest.advanceTimersByTime(1000);
+            const replacement = createPortStub();
+            chrome.runtime.connectNative.mockImplementation(() => replacement);
+            port.drop({message: 'Native host has exited.'});
+            jest.advanceTimersByTime(0);
+            const third = createPortStub();
+            chrome.runtime.connectNative.mockImplementation(() => third);
+            replacement.drop({message: 'Native host has exited.'});
+            jest.advanceTimersByTime(999);
+            expect(chrome.runtime.connectNative).toHaveBeenCalledTimes(2);
+            jest.advanceTimersByTime(1);
+            expect(chrome.runtime.connectNative).toHaveBeenCalledTimes(3);
+        });
+
         it('waits longer each time the relaunch fails too, up to a cap', () => {
             launchNvimServer();
             port.start();

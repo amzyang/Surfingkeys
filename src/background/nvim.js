@@ -117,6 +117,7 @@ function createNvimServer() {
         const nm = chrome.runtime.connectNative(NATIVE_HOST_NAME);
         port = nm;
         const password = generatePassword();
+        let answeredAt = null;
         nm.onDisconnect.addListener((disconnected) => {
             // Firefox reports it on the port, Chrome in runtime.lastError.
             const reason = (disconnected && disconnected.error && disconnected.error.message)
@@ -135,8 +136,15 @@ function createNvimServer() {
             rejectPending(failure);
             if (nativeConnected) {
                 armInstance();
-                const delay = reconnectDelay;
-                reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_DELAY_MAX_MS);
+                // A host that had been up a while died of something done in the
+                // editor -- `:q` quits it -- not of starting up, so it comes straight
+                // back: the next editor would otherwise wait out the delay.
+                const upAWhile = answeredAt !== null
+                    && Date.now() - answeredAt >= RECONNECT_DELAY_MS;
+                const delay = upAWhile ? 0 : reconnectDelay;
+                if (!upAWhile) {
+                    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_DELAY_MAX_MS);
+                }
                 setTimeout(startNative, delay);
             } else {
                 delete nvimServer.instance;
@@ -151,6 +159,9 @@ function createNvimServer() {
         });
         nm.onMessage.addListener(async (resp) => {
             markReachable();
+            if (answeredAt === null) {
+                answeredAt = Date.now();
+            }
             // A host that answered got up, so its next failure starts the delay over.
             reconnectDelay = RECONNECT_DELAY_MS;
             if (deliver(resp)) {
